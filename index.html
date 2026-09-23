@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cutout</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div class="titlebar" data-tauri-drag-region>
+      <div class="titlebar-title" data-tauri-drag-region>
+        <img class="logo" src="/src/assets/logo.png" width="18" height="18" alt="" />
+        <span>Cutout</span>
+      </div>
+    </div>
+
+    <main class="app">
+      <!-- Empty / drop state -->
+      <section id="dropzone" class="dropzone">
+        <div class="dropzone-inner">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 17v2a2 2 0 002 2h10a2 2 0 002-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <p class="dropzone-title">Drop an image here</p>
+          <p class="dropzone-subtitle">PNG, JPG, or WebP &mdash; any resolution</p>
+          <button id="browseBtn" class="btn btn-primary">Browse files</button>
+        </div>
+        <input id="fileInput" type="file" accept=".png,.jpg,.jpeg,.webp" hidden />
+      </section>
+
+      <!-- Workspace (populated once an image is loaded) -->
+      <section id="workspace" class="workspace hidden">
+        <div class="workspace-toolbar">
+          <div class="file-meta">
+            <span id="fileName" class="file-name">&mdash;</span>
+            <span id="fileDims" class="file-dims"></span>
+          </div>
+          <div class="toolbar-actions">
+            <button id="newImageBtn" class="btn btn-ghost">New image</button>
+            <button id="removeBgBtn" class="btn btn-primary">Remove Background</button>
+          </div>
+        </div>
+
+        <div class="canvas-row">
+          <div class="canvas-pane">
+            <span class="pane-label">Original</span>
+            <div class="pane-frame">
+              <img id="originalImg" alt="Original image" />
+            </div>
+          </div>
+
+          <div class="canvas-divider" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+
+          <div class="canvas-pane">
+            <span class="pane-label">Result</span>
+            <div class="pane-frame checkerboard" id="resultFrame">
+              <img id="resultImg" alt="Background removed result" class="hidden" />
+              <div id="resultPlaceholder" class="result-placeholder">
+                <p>Click "Remove Background" to see your cutout</p>
+              </div>
+              <div id="processingOverlay" class="processing-overlay hidden">
+                <div class="spinner"></div>
+                <p id="processingLabel">Removing background&hellip;</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="workspace-footer">
+          <span id="statusText" class="status-text"></span>
+          <div class="footer-actions">
+            <button id="exportBtn" class="btn btn-primary" disabled>Export PNG</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
