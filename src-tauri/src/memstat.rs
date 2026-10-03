@@ -6,6 +6,39 @@
 //! Implementation follows the confirmed-working pattern from the
 //! `memory-stats` crate's own Windows backend (using `GetProcessMemoryInfo`
 //! via `windows-sys`), rather than inventing the FFI call from scratch.
+//!
+//! Output goes to BOTH stderr and a plain-text log file. The release build
+//! is a Windows GUI-subsystem app, which has no console attached, so stderr
+//! alone is not reliably visible when the installed app is launched
+//! normally. The log file (`cutout-perf.log` in the system temp folder,
+//! i.e. `%TEMP%\cutout-perf.log`) can always be opened and sent as-is.
+
+use std::io::Write;
+use std::path::PathBuf;
+
+fn log_path() -> PathBuf {
+    std::env::temp_dir().join("cutout-perf.log")
+}
+
+/// Starts a fresh log for this app run so the file only ever contains one
+/// session and can't grow without bound across launches.
+pub fn reset_log() {
+    let _ = std::fs::write(log_path(), "");
+    log_line("--- Cutout session started ---");
+}
+
+/// Appends one line to the log file (best-effort: a failed write is ignored
+/// so diagnostics can never break the app) and mirrors it to stderr.
+pub fn log_line(line: &str) {
+    eprintln!("{line}");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path())
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
 
 #[cfg(windows)]
 pub fn current_process_memory_mb() -> Option<(u64, u64)> {
@@ -48,18 +81,18 @@ pub fn current_process_memory_mb() -> Option<(u64, u64)> {
     None
 }
 
-/// Logs current process memory to stderr with a stage label, or a plain
-/// "unavailable" note on non-Windows/failure, so `[perf]` output always has
-/// a consistent line to look for regardless of platform.
+/// Logs current process memory with a stage label, or a plain "unavailable"
+/// note on non-Windows/failure, so the log always has a consistent line to
+/// look for regardless of platform.
 pub fn log_memory(stage: &str) {
     match current_process_memory_mb() {
         Some((working_set_mb, pagefile_mb)) => {
-            eprintln!(
+            log_line(&format!(
                 "[perf][mem] {stage}: working set {working_set_mb} MB, committed {pagefile_mb} MB"
-            );
+            ));
         }
         None => {
-            eprintln!("[perf][mem] {stage}: unavailable on this platform");
+            log_line(&format!("[perf][mem] {stage}: unavailable on this platform"));
         }
     }
 }

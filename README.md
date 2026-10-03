@@ -1,140 +1,117 @@
-# Cutout — Local Background Remover
+# Cutout
 
-A desktop app that removes image backgrounds entirely on your own computer.
-No account, no upload, no subscription, no resolution limit.
+Remove image backgrounds on your own computer. No account, no upload, no
+subscription, no resolution limit. Everything runs offline.
 
----
+## Features
 
-## 1. One-time setup (Windows 11)
+- Drag and drop, browse, or paste an image (PNG, JPG, WebP, BMP, TIFF, GIF)
+- Batch mode: pick several images or a whole folder (subfolders included) and
+  export everything at once
+- Four AI models, from fast to best quality (see below)
+- Output keeps the original resolution, saved as a transparent PNG
+- Zoom and pan the preview, Dark / Light / System theme
+- Cancel any run at any time (Esc works too)
 
-You need two things installed: **Node.js** and **Rust**. If you already have
-them, skip to step 2.
+## Install (Windows)
 
-1. Install Node.js LTS: https://nodejs.org (download the "LTS" installer, run
-   it, accept the defaults).
-2. Install Rust: https://rustup.rs — download `rustup-init.exe`, run it,
-   choose the default install option (`1`) when prompted.
-3. Install the Tauri Windows prerequisites:
-   - **Microsoft C++ Build Tools** — https://visualstudio.microsoft.com/visual-cpp-build-tools/
-     Run the installer, check **"Desktop development with C++"**, install.
-   - **WebView2** — already preinstalled on virtually all Windows 11 machines.
-     If `npm run tauri dev` complains about it later, get it from
-     https://developer.microsoft.com/microsoft-edge/webview2/
-4. Close and reopen your terminal (PowerShell or Windows Terminal) so the new
-   `PATH` entries take effect. Verify:
+1. Download `Cutout_x.y.z_x64-setup.exe` from the Releases page.
+2. Run it.
 
-   ```powershell
-   node --version
-   rustc --version
-   cargo --version
-   ```
+**Windows may show a blue "Windows protected your PC" (SmartScreen) warning.**
+This appears for any new app that isn't code-signed with a paid certificate,
+and Cutout isn't signed yet. It doesn't mean anything is wrong with the file.
+To continue, click **More info**, then **Run anyway**. You only need to do
+this once.
 
-   All three should print a version number. If any says "not recognized",
-   the corresponding install didn't complete — reopen the terminal or
-   re-run that installer.
+## System requirements
 
-## 2. Get the AI model
+- Windows 10 or 11, 64-bit
+- A processor with **AVX2** support. This covers most PCs made since about
+  2013-2015. Older CPUs (for example AMD A-series "Kaveri" chips and Intel
+  Sandy/Ivy Bridge) can't run the AI engine, and Cutout will tell you so when
+  it starts.
+- 8 GB of RAM or more recommended. The Best models briefly use several GB
+  while processing an image.
+- No GPU needed. Cutout runs on the CPU.
 
-The app uses **BiRefNet_lite**, exported to ONNX, MIT-licensed. It is not
-checked into this project (224 MB) — download it once:
+## Models
 
-1. Go to: https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx
-2. Save the file as `models/model.onnx` in this project folder (i.e.
-   alongside `src-tauri/`, `src/`, `package.json` — NOT inside `src-tauri`).
+| Name | Speed | Notes |
+| --- | --- | --- |
+| Fast | quickest | Good for simple subjects and quick checks |
+| Balanced | fast | Good everyday default |
+| Best | slower | Fine detail such as hair |
+| Best+ | slowest | Sharpest results, best for final exports |
 
-Folder should look like:
+Licenses and credits for each model are in `THIRD_PARTY_NOTICES.md`.
 
-```text
-bgremover/
-├── models/
-│   └── model.onnx      ← the file you just downloaded
-├── src/
-├── src-tauri/
-├── package.json
-└── ...
+## Privacy
+
+Cutout never connects to the internet to process images. Your pictures stay
+on your computer. (The Windows installer may download Microsoft's WebView2
+component if your PC doesn't already have it.)
+
+## Troubleshooting
+
+Cutout writes a small log to `%TEMP%\cutout-perf.log` each time it starts.
+If something goes wrong, attach that file when you report the problem.
+
+## Build from source
+
+You need Node.js (LTS), Rust, and on Windows the Microsoft C++ Build Tools
+("Desktop development with C++"). WebView2 is preinstalled on Windows 11.
+
+1. The AI models are not stored in git. Put these four files in `models/`:
+
+   | File | Download |
+   | --- | --- |
+   | `model.onnx` | https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx |
+   | `model_fp16.onnx` | https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model_fp16.onnx |
+   | `isnet-general-use.onnx` | https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx |
+   | `u2netp.onnx` | https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx |
+
+2. Install dependencies: `npm install`
+3. Run in development: `npm run tauri dev` (the first build takes a while)
+4. Build the installer: `npm run tauri build`
+
+On Windows the installer is written to
+`src-tauri/target/release/bundle/nsis/`.
+
+## Install (macOS, Apple Silicon)
+
+Download the `.dmg`, open it and drag Cutout to Applications. Intel Macs are
+not supported, because the AI engine has no Intel-Mac version.
+
+Cutout isn't notarized by Apple, so macOS blocks the first launch. To open
+it anyway: try to open Cutout once, then go to **System Settings > Privacy &
+Security**, scroll down and click **Open Anyway**. If macOS says the app is
+"damaged", run this once in Terminal and try again:
+
+```bash
+xattr -cr /Applications/Cutout.app
 ```
 
-## 3. Install dependencies
+## Install (Linux, x86_64)
 
-Open a terminal in this project folder and run:
+- **Debian / Ubuntu:** `sudo apt install ./Cutout_x.y.z_amd64.deb`
+- **Any distro:** download the `.AppImage`, run `chmod +x Cutout_*.AppImage`,
+  then double-click it or run it from a terminal.
 
-```powershell
-npm install
-```
+Needs a recent distro (Ubuntu 22.04 or newer, or equivalent) and a processor
+with AVX2. On Linux, if the AVX2 check fails Cutout can only print a message
+to the terminal, so launch it from a terminal if it won't start.
 
-This downloads the frontend dependencies. The Rust dependencies (including
-`ort` for ONNX Runtime) are fetched automatically the first time you run or
-build the app — that first run will take a few minutes while Cargo compiles
-everything.
+The macOS and Linux builds are new and have had less testing than Windows.
 
-## 4. Run it (development mode)
+## Build the installers with GitHub Actions
 
-```powershell
-npm run tauri dev
-```
+`.github/workflows/build.yml` builds Windows, macOS and Linux installers on
+GitHub's servers. Run it from the Actions tab (**Build installers > Run
+workflow**) and download the installers from the run page, or push a tag such
+as `v0.1.0` to get a draft Release with all three attached.
 
-The first run compiles the whole Rust backend from scratch, so it can take
-**5–15 minutes** depending on your machine — this is normal and only happens
-once (or after dependency changes). Subsequent runs start in seconds.
+## License
 
-A window should open with the app. Drop an image in, click **Remove
-Background**, and you should see a transparent-checkerboard result appear.
-
-**If something errors here, copy the full terminal output and send it back —
-that's the fastest way to get it fixed.**
-
-## 5. Build the installable app
-
-Once `npm run tauri dev` works correctly:
-
-```powershell
-npm run tauri build
-```
-
-This produces the production build. On Windows you'll get both:
-
-- An `.msi` installer
-- An `.exe` (NSIS-based) installer
-
-Look for them under:
-
-```text
-src-tauri/target/release/bundle/msi/Cutout_0.1.0_x64_en-US.msi
-src-tauri/target/release/bundle/nsis/Cutout_0.1.0_x64-setup.exe
-```
-
-Run either installer, then launch **Cutout** from the Start menu like any
-other app.
-
-## Building for macOS or Linux later
-
-The same source works unmodified — Tauri cross-packages to whatever OS you
-run `npm run tauri build` on:
-
-- **macOS**: run the same setup (Xcode Command Line Tools instead of MSVC
-  Build Tools) on a Mac, `npm install`, `npm run tauri build` → produces a
-  `.app` and `.dmg`.
-- **Linux**: install the Tauri Linux prerequisites (webkit2gtk, etc. — see
-  https://v2.tauri.app/start/prerequisites/#linux), then the same commands →
-  produces an `.AppImage` and `.deb`.
-
-You cannot cross-compile a Windows `.exe` from macOS/Linux or vice versa in
-one step — you build once per OS, on that OS (or its CI runner).
-
-## Model & license
-
-- **Model:** BiRefNet_lite (ONNX export), by the BiRefNet authors
-  (ZhengPeng7 et al.), ONNX conversion by the `onnx-community` on Hugging
-  Face.
-- **License:** MIT — free to use, modify, and redistribute, including
-  bundling inside this app.
-- **Source:** https://huggingface.co/onnx-community/BiRefNet_lite-ONNX
-
-## What V1 does and doesn't do
-
-Does: import PNG/JPG/WebP via drag-drop or browse, run local AI background
-removal, preserve full original resolution, export a transparent PNG,
-CPU-only (no GPU required).
-
-Doesn't (by design, for V1): batch processing, multiple models, background
-replacement, edge refinement controls, cloud anything.
+Cutout is MIT licensed (see `LICENSE`). Bundled models and libraries have
+their own licenses, listed in `THIRD_PARTY_NOTICES.md`.

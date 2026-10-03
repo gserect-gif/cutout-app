@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://asset.localhost; style-src 'self' 'unsafe-inline'",
+      "csp": "default-src 'self'; img-src 'self' data: asset: http://asset.localhost https://asset.localhost; style-src 'self' 'unsafe-inline'",
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPCACHE/**", "$HOME/**", "$DOWNLOAD/**", "$DESKTOP/**", "$PICTURE/**", "$DOCUMENT/**"]
@@ -42,12 +42,20 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../models/model.onnx": "models/model.onnx"
+      "../models/model.onnx": "models/model.onnx",
+      "../models/model_fp16.onnx": "models/model_fp16.onnx",
+      "../models/u2netp.onnx": "models/u2netp.onnx",
+      "../models/isnet-general-use.onnx": "models/isnet-general-use.onnx",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../LICENSE": "LICENSE"
     },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }
+    },
+    "macOS": {
+      "signingIdentity": "-"
     }
   }
 }

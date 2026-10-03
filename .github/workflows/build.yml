@@ -1,0 +1,120 @@
+name: Build installers
+
+# Builds Cutout for Windows, macOS (Apple Silicon) and Linux (x86_64).
+#
+# - Run it by hand: GitHub > Actions > "Build installers" > Run workflow.
+#   The installers show up as downloadable artifacts on the run page.
+# - Push a tag like v0.1.0 to also create a DRAFT GitHub Release with the
+#   installers attached.
+#
+# macOS on Intel is not built: the prebuilt ONNX Runtime that the `ort` crate
+# downloads has no Intel-Mac version.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            args: "--bundles nsis"
+            artifact: "src-tauri/target/release/bundle/nsis/*.exe"
+          - name: macOS (Apple Silicon)
+            os: macos-latest
+            args: "--bundles dmg"
+            artifact: "src-tauri/target/release/bundle/dmg/*.dmg"
+          - name: Linux
+            os: ubuntu-22.04
+            args: "--bundles deb,appimage"
+            artifact: |
+              src-tauri/target/release/bundle/deb/*.deb
+              src-tauri/target/release/bundle/appimage/*.AppImage
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      # The AI models are not stored in git, so download them here. They are
+      # cached between runs so this only happens once per OS.
+      - name: Cache AI models
+        id: models-cache
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: models-v1-${{ runner.os }}
+
+      - name: Download AI models
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          get() { curl -L --fail --retry 3 --retry-delay 5 -o "models/$1" "$2"; }
+          get model.onnx "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx"
+          get model_fp16.onnx "https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model_fp16.onnx"
+          get isnet-general-use.onnx "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx"
+          get u2netp.onnx "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
+
+      - name: Check AI models
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in model.onnx model_fp16.onnx isnet-general-use.onnx u2netp.onnx; do
+            size=$(wc -c < "models/$f")
+            echo "$f: $size bytes"
+            if [ "$size" -lt 1000000 ]; then
+              echo "models/$f is missing or too small, the download probably failed" >&2
+              exit 1
+            fi
+          done
+
+      - name: Install npm packages
+        run: npm ci
+
+      - name: Build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: "Cutout ${{ github.ref_name }}"
+          releaseDraft: true
+          args: ${{ matrix.args }}
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cutout-${{ runner.os }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14

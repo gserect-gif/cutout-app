@@ -20,6 +20,41 @@
   font-synthesis: none;
 }
 
+/* Light theme override. Applied when <html data-theme="light">. "System"
+   mode leaves data-theme unset and relies on the prefers-color-scheme
+   media query further down instead. */
+:root[data-theme="light"] {
+  --bg-0: #f5f6f8;
+  --bg-1: #ffffff;
+  --bg-2: #eef0f3;
+  --bg-3: #e4e7ec;
+  --border: #dde1e7;
+  --border-hover: #c9cfd8;
+  --text-0: #1a1d24;
+  --text-1: #4a5160;
+  --text-2: #7d8496;
+  --accent: #4f6fe0;
+  --accent-hover: #3f5cd0;
+  --accent-dim: rgba(79, 111, 224, 0.1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg-0: #f5f6f8;
+    --bg-1: #ffffff;
+    --bg-2: #eef0f3;
+    --bg-3: #e4e7ec;
+    --border: #dde1e7;
+    --border-hover: #c9cfd8;
+    --text-0: #1a1d24;
+    --text-1: #4a5160;
+    --text-2: #7d8496;
+    --accent: #4f6fe0;
+    --accent-hover: #3f5cd0;
+    --accent-dim: rgba(79, 111, 224, 0.1);
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -49,6 +84,7 @@ body {
   min-height: 40px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 14px;
   background: var(--bg-1);
   border-bottom: 1px solid var(--border);
@@ -66,6 +102,25 @@ body {
 .logo {
   flex-shrink: 0;
   border-radius: 4px;
+}
+
+.titlebar-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.titlebar-btn:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
 }
 
 /* ---------- Layout ---------- */
@@ -132,6 +187,13 @@ body {
   font-size: 13px;
 }
 
+.dropzone-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 /* ---------- Buttons ---------- */
 
 .btn {
@@ -177,6 +239,40 @@ body {
   color: var(--text-0);
 }
 
+.btn-icon {
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- Model picker (select dropdown) ---------- */
+
+.model-select {
+  appearance: none;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text-0);
+  padding: 8px 28px 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237d8496' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+.model-select:hover {
+  border-color: var(--border-hover);
+}
+
+.model-select:disabled {
+  cursor: wait;
+  color: var(--text-2);
+  opacity: 0.7;
+}
+
 /* ---------- Workspace ---------- */
 
 .workspace {
@@ -190,8 +286,15 @@ body {
 .workspace-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
+}
+
+.workspace-toolbar .file-meta {
+  flex: 1;
+}
+
+.workspace-toolbar .toolbar-actions {
+  margin-left: auto;
 }
 
 .file-meta {
@@ -218,6 +321,7 @@ body {
 
 .toolbar-actions {
   display: flex;
+  align-items: center;
   gap: 10px;
   flex-shrink: 0;
 }
@@ -267,22 +371,68 @@ body {
   display: block;
 }
 
+.pane-frame.zoomable {
+  overflow: hidden;
+  cursor: grab;
+  position: relative;
+}
+
+.pane-frame.zoomable.panning {
+  cursor: grabbing;
+}
+
+.pane-frame.zoomable img {
+  transition: transform 0.06s linear;
+  transform-origin: center center;
+}
+
 .checkerboard {
-  background-image: linear-gradient(45deg, #23262f 25%, transparent 25%),
-    linear-gradient(-45deg, #23262f 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #23262f 75%),
-    linear-gradient(-45deg, transparent 75%, #23262f 75%);
+  /* Tied to theme variables rather than fixed hex values so the squares
+     don't invert oddly between dark and light mode. */
+  background-image: linear-gradient(45deg, var(--bg-3) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--bg-3) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--bg-3) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--bg-3) 75%);
   background-size: 20px 20px;
   background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
-  background-color: #1a1d24;
+  background-color: var(--bg-1);
 }
 
 .canvas-divider {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: var(--text-2);
+  gap: 6px;
+  width: 36px;
   flex-shrink: 0;
-  width: 20px;
+  color: var(--text-2);
+}
+
+.zoom-btn {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.zoom-btn:hover {
+  border-color: var(--border-hover);
+  color: var(--text-0);
+}
+
+.zoom-btn-text {
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .result-placeholder {
@@ -325,6 +475,16 @@ body {
   }
 }
 
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
 .workspace-footer {
   display: flex;
   align-items: center;
@@ -350,6 +510,103 @@ body {
   gap: 10px;
 }
 
+/* ---------- Batch workspace ---------- */
+
+.batch-workspace {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 14px;
+}
+
+.batch-list {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-1);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.batch-row {
+  display: grid;
+  grid-template-columns: 40px 20px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.batch-row:hover {
+  background: var(--bg-2);
+}
+
+.batch-row-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  /* Shown as an empty rounded square (via the background above) until a
+     thumbnail arrives asynchronously and sets src — never broken-image icon. */
+  color: transparent;
+}
+
+.batch-row-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  color: var(--bg-0);
+}
+
+.batch-row-icon-pending {
+  background: var(--bg-3);
+}
+
+.batch-row-icon-processing {
+  background: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.batch-row-icon-done {
+  background: var(--success);
+}
+
+.batch-row-icon-failed {
+  background: var(--danger);
+}
+
+.batch-row-name {
+  color: var(--text-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.batch-row-detail {
+  color: var(--text-2);
+  font-size: 12px;
+  flex-shrink: 0;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---------- Toast ---------- */
 
 .toast {
@@ -369,4 +626,100 @@ body {
 
 .toast.error {
   border-color: var(--danger);
+}
+
+/* ---------- Settings panel ---------- */
+/* Anchored as a top-right popover near the gear icon, not a centered modal. */
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding-top: 48px;
+  padding-right: 16px;
+  z-index: 200;
+}
+
+.settings-panel {
+  width: 280px;
+  max-width: calc(100vw - 40px);
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-header h2 {
+  font-size: 15px;
+  margin: 0;
+  color: var(--text-0);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-row + .settings-row {
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-label {
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.settings-hint {
+  font-size: 11px;
+  color: var(--text-2);
+  margin: -8px 0 0;
+  line-height: 1.5;
+}
+
+.theme-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.theme-option {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-1);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+}
+
+.theme-option:last-child {
+  border-right: none;
+}
+
+.theme-option:hover {
+  background: var(--bg-2);
+}
+
+.theme-option.active {
+  background: var(--accent);
+  color: #0b0e14;
 }

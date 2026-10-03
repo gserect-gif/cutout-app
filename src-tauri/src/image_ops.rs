@@ -4,13 +4,6 @@ use image::{DynamicImage, GenericImageView, RgbImage, RgbaImage};
 
 use crate::AppError;
 
-/// The model's fixed square input resolution. BiRefNet-family models are
-/// trained at 1024x1024; we resize (with aspect-preserving letterboxing is
-/// unnecessary since BiRefNet was trained on direct/stretched resizing) the
-/// full-resolution source down for inference only, then upscale the
-/// predicted mask back to the original dimensions before compositing.
-pub const MODEL_INPUT_SIZE: u32 = 1024;
-
 pub struct LoadedImage {
     pub image: DynamicImage,
     pub width: u32,
@@ -30,7 +23,13 @@ pub fn load_image(path: &str) -> Result<LoadedImage, AppError> {
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
 
-    if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp") {
+    // Kept in sync with the `SUPPORTED_EXTENSIONS` list in lib.rs (used for
+    // folder scans and frontend file-picker filters) — both lists must
+    // agree, or a file could pass one check and fail the other.
+    if !matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tiff" | "tif" | "gif"
+    ) {
         return Err(AppError::UnsupportedFormat(ext));
     }
 
@@ -52,16 +51,14 @@ pub fn load_image(path: &str) -> Result<LoadedImage, AppError> {
     Ok(LoadedImage { image, width, height })
 }
 
-/// Downscale (or upscale) the source image to a square MODEL_INPUT_SIZE x
-/// MODEL_INPUT_SIZE RGB buffer for model input, using a high-quality Lanczos3
-/// filter. The source image itself is untouched; this returns a new buffer.
-pub fn prepare_model_input(img: &DynamicImage) -> RgbImage {
-    img.resize_exact(
-        MODEL_INPUT_SIZE,
-        MODEL_INPUT_SIZE,
-        image::imageops::FilterType::Lanczos3,
-    )
-    .to_rgb8()
+/// Resize the source image to a square `size` x `size` RGB buffer for model
+/// input, using a high-quality Lanczos3 filter. The source image itself is
+/// untouched; this returns a new buffer. `size` is per-model (see
+/// `inference::input_size_for`) since the bundled models expect different
+/// fixed input resolutions.
+pub fn prepare_model_input(img: &DynamicImage, size: u32) -> RgbImage {
+    img.resize_exact(size, size, image::imageops::FilterType::Lanczos3)
+        .to_rgb8()
 }
 
 /// Resize a single-channel mask (values 0.0-1.0, row-major, mask_size x

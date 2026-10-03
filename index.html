@@ -12,6 +12,28 @@
         <img class="logo" src="/src/assets/logo.png" width="18" height="18" alt="" />
         <span>Cutout</span>
       </div>
+      <button id="settingsBtn" class="titlebar-btn" title="Settings" aria-label="Settings">
+        <img src="data:image/png;base64,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" width="16" height="16" alt="" style="width:16px !important;height:16px !important;display:inline-block !important;opacity:1 !important;visibility:visible !important;" />
+      </button>
+    </div>
+
+    <!-- Settings panel -->
+    <div id="settingsOverlay" class="settings-overlay hidden">
+      <div class="settings-panel">
+        <div class="settings-header">
+          <h2>Settings</h2>
+          <button id="settingsCloseBtn" class="btn btn-ghost" aria-label="Close">✕</button>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Theme</span>
+          <div class="theme-toggle" id="themeToggle">
+            <button data-theme-choice="dark" class="theme-option">Dark</button>
+            <button data-theme-choice="light" class="theme-option">Light</button>
+            <button data-theme-choice="system" class="theme-option">System</button>
+          </div>
+        </div>
+        <p class="settings-hint">Cutout runs entirely on this device. No images or data ever leave your computer.</p>
+      </div>
     </div>
 
     <main class="app">
@@ -21,44 +43,78 @@
           <svg width="44" height="44" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 17v2a2 2 0 002 2h10a2 2 0 002-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          <p class="dropzone-title">Drop an image here</p>
-          <p class="dropzone-subtitle">PNG, JPG, or WebP &mdash; any resolution</p>
-          <button id="browseBtn" class="btn btn-primary">Browse files</button>
+          <p class="dropzone-title">Drop images or a folder here</p>
+          <p class="dropzone-subtitle">PNG, JPG, WebP, BMP, TIFF, or GIF &mdash; any resolution &mdash; single or multiple</p>
+          <div class="dropzone-actions">
+            <button id="browseBtn" class="btn btn-primary">Browse files</button>
+            <button id="browseMultipleBtn" class="btn btn-ghost">Select multiple</button>
+            <button id="browseFolderBtn" class="btn btn-ghost">Select folder</button>
+          </div>
         </div>
         <input id="fileInput" type="file" accept=".png,.jpg,.jpeg,.webp" hidden />
       </section>
 
-      <!-- Workspace (populated once an image is loaded) -->
+      <!-- Batch workspace: shown once 2+ images are selected at once -->
+      <section id="batchWorkspace" class="batch-workspace hidden">
+        <div class="workspace-toolbar">
+          <button id="batchBackBtn" class="btn btn-ghost btn-icon" aria-label="Back" title="Back">
+            <img src="data:image/png;base64,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" width="16" height="16" alt="" style="width:16px !important;height:16px !important;display:inline-block !important;opacity:1 !important;visibility:visible !important;" />
+          </button>
+          <div class="file-meta">
+            <span id="batchSummary" class="file-name">&mdash;</span>
+          </div>
+          <div class="toolbar-actions">
+            <select id="batchModelSelect" class="model-select" title="Model"></select>
+            <button id="batchStartBtn" class="btn btn-primary">Remove Backgrounds</button>
+            <button id="batchCancelBtn" class="btn btn-ghost hidden">Cancel</button>
+          </div>
+        </div>
+
+        <div class="batch-list" id="batchList"></div>
+
+        <div class="workspace-footer">
+          <span id="batchStatusText" class="status-text"></span>
+          <div class="footer-actions">
+            <button id="batchExportBtn" class="btn btn-primary" disabled>Export All</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Workspace (populated once a single image is loaded) -->
       <section id="workspace" class="workspace hidden">
         <div class="workspace-toolbar">
+          <button id="imageBackBtn" class="btn btn-ghost btn-icon" aria-label="Back" title="Back">
+            <img src="data:image/png;base64,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" width="16" height="16" alt="" style="width:16px !important;height:16px !important;display:inline-block !important;opacity:1 !important;visibility:visible !important;" />
+          </button>
           <div class="file-meta">
             <span id="fileName" class="file-name">&mdash;</span>
             <span id="fileDims" class="file-dims"></span>
           </div>
           <div class="toolbar-actions">
-            <button id="newImageBtn" class="btn btn-ghost">New image</button>
+            <select id="modelSelect" class="model-select" title="Model"></select>
             <button id="removeBgBtn" class="btn btn-primary">Remove Background</button>
+            <button id="cancelBtn" class="btn btn-ghost hidden">Cancel</button>
           </div>
         </div>
 
         <div class="canvas-row">
           <div class="canvas-pane">
             <span class="pane-label">Original</span>
-            <div class="pane-frame">
-              <img id="originalImg" alt="Original image" />
+            <div class="pane-frame zoomable" id="originalFrame">
+              <img id="originalImg" alt="Original image" draggable="false" />
             </div>
           </div>
 
-          <div class="canvas-divider" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+          <div class="canvas-divider">
+            <button id="zoomInBtn" class="zoom-btn" title="Zoom in" aria-label="Zoom in">+</button>
+            <button id="zoomOutBtn" class="zoom-btn" title="Zoom out" aria-label="Zoom out">&minus;</button>
+            <button id="zoomResetBtn" class="zoom-btn zoom-btn-text" title="Reset zoom (double-click a preview)" aria-label="Reset zoom">1:1</button>
           </div>
 
           <div class="canvas-pane">
             <span class="pane-label">Result</span>
-            <div class="pane-frame checkerboard" id="resultFrame">
-              <img id="resultImg" alt="Background removed result" class="hidden" />
+            <div class="pane-frame checkerboard zoomable" id="resultFrame">
+              <img id="resultImg" alt="Background removed result" class="hidden" draggable="false" />
               <div id="resultPlaceholder" class="result-placeholder">
                 <p>Click "Remove Background" to see your cutout</p>
               </div>

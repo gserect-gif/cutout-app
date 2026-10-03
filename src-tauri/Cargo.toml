@@ -30,7 +30,7 @@ ort = { version = "2.0.0-rc.13" }
 # ([perf] logging) during the current investigation into RAM usage across
 # repeated inferences — not a general-purpose dependency.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_Foundation"] }
+windows-sys = { version = "0.59", features = ["Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 panic = "abort"

@@ -1,0 +1,181 @@
+/* ============================================================
+   ADDITIONS for theming, settings panel, and back/icon buttons.
+   Append everything below to the end of your existing styles.css
+   ============================================================ */
+
+/* Light theme override. Applied when <html data-theme="light">.
+   "System" mode leaves data-theme unset and relies on this same
+   block firing under prefers-color-scheme instead — see below. */
+:root[data-theme="light"] {
+  --bg-0: #f5f6f8;
+  --bg-1: #ffffff;
+  --bg-2: #eef0f3;
+  --bg-3: #e4e7ec;
+  --border: #dde1e7;
+  --border-hover: #c9cfd8;
+  --text-0: #1a1d24;
+  --text-1: #4a5160;
+  --text-2: #7d8496;
+  --accent: #4f6fe0;
+  --accent-hover: #3f5cd0;
+  --accent-dim: rgba(79, 111, 224, 0.1);
+}
+
+/* "System" mode: no data-theme attribute set at all means we follow the
+   OS. Default :root values are already the dark theme, so only light
+   needs a media-query override here. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg-0: #f5f6f8;
+    --bg-1: #ffffff;
+    --bg-2: #eef0f3;
+    --bg-3: #e4e7ec;
+    --border: #dde1e7;
+    --border-hover: #c9cfd8;
+    --text-0: #1a1d24;
+    --text-1: #4a5160;
+    --text-2: #7d8496;
+    --accent: #4f6fe0;
+    --accent-hover: #3f5cd0;
+    --accent-dim: rgba(79, 111, 224, 0.1);
+  }
+}
+
+.checkerboard {
+  /* Checkerboard squares invert too dark/too light depending on theme if
+     left as fixed hex values — tie them to the theme instead. */
+  background-image: linear-gradient(45deg, var(--bg-3) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--bg-3) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--bg-3) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--bg-3) 75%);
+  background-color: var(--bg-1);
+}
+
+/* ---------- Titlebar settings button ---------- */
+
+.titlebar {
+  justify-content: space-between;
+}
+
+.titlebar-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.titlebar-btn:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
+}
+
+/* ---------- Icon-only buttons (back arrows) ---------- */
+
+.btn-icon {
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- Settings overlay ---------- */
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.settings-panel {
+  width: 360px;
+  max-width: calc(100vw - 40px);
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 18px;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.settings-header h2 {
+  font-size: 15px;
+  margin: 0;
+  color: var(--text-0);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-label {
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.theme-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.theme-option {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-1);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+}
+
+.theme-option:last-child {
+  border-right: none;
+}
+
+.theme-option:hover {
+  background: var(--bg-2);
+}
+
+.theme-option.active {
+  background: var(--accent);
+  color: #0b0e14;
+}
+
+/* ---------- Settings panel: anchored near the gear icon, not centered ---------- */
+/* Overrides the earlier centered-modal rules with a top-right popover instead. */
+
+.settings-overlay {
+  background: transparent;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding-top: 48px;
+  padding-right: 16px;
+}
+
+.settings-panel {
+  width: 280px;
+  box-shadow: var(--shadow-lg);
+}
