@@ -98,7 +98,8 @@ xattr -cr /Applications/Cutout.app
 - **Any distro:** download the `.AppImage`, run `chmod +x Cutout_*.AppImage`,
   then double-click it or run it from a terminal.
 
-Needs a recent distro (Ubuntu 22.04 or newer, or equivalent) and a processor
+Needs Ubuntu 24.04 or newer (or a distro with an equally new system
+libraries) and a processor
 with AVX2. On Linux, if the AVX2 check fails Cutout can only print a message
 to the terminal, so launch it from a terminal if it won't start.
 
