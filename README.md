@@ -50,6 +50,10 @@ this once.
 
 Licenses and credits for each model are in `THIRD_PARTY_NOTICES.md`.
 
+## Video
+
+https://github.com/user-attachments/assets/6539456f-e150-4a4b-8e6d-6c7438f2d857
+
 ## Privacy
 
 Cutout never connects to the internet to process images. Your pictures stay
