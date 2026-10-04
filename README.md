@@ -1,5 +1,5 @@
 # Discord
-
+Ecounter any bugs, technical problems or have some feedback for me? Feel free to join my discord server! 
 My Discord Server: https://discord.gg/BZK6sst4KX
 
 # Cutout
