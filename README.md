@@ -1,3 +1,7 @@
+# Discord
+
+My Discord Server: https://discord.gg/BZK6sst4KX
+
 # Cutout
 
 Remove image backgrounds on your own computer. No account, no upload, no
