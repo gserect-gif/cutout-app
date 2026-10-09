@@ -1,3 +1,7 @@
+# Discord
+Ecounter any bugs, technical problems or have some feedback for me? Feel free to join my discord server! 
+My Discord Server: https://discord.gg/BZK6sst4KX
+
 # Cutout
 
 Remove image backgrounds on your own computer. No account, no upload, no
@@ -49,6 +53,10 @@ this once.
 | Best+ | slowest | Sharpest results, best for final exports |
 
 Licenses and credits for each model are in `THIRD_PARTY_NOTICES.md`.
+
+## Video
+
+https://github.com/user-attachments/assets/6539456f-e150-4a4b-8e6d-6c7438f2d857
 
 ## Privacy
 
