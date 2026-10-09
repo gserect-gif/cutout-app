@@ -1,7 +1,8 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 // ---------- Types mirrored from the Rust backend ----------
@@ -152,6 +153,7 @@ function extOf(path: string): string {
 
 function resetWorkspace() {
   resetZoomIfReady();
+  exportPopover.classList.add("hidden");
   currentImagePath = null;
   currentImageWidth = 0;
   currentImageHeight = 0;
@@ -177,6 +179,7 @@ function resetWorkspace() {
 }
 
 function resetBatchWorkspace() {
+  exportPopover.classList.add("hidden");
   batchItems = [];
   isBatchProcessing = false;
   batchList.innerHTML = "";
@@ -485,6 +488,10 @@ batchExportBtn.addEventListener("click", async () => {
     const failures = await invoke<string[]>("export_batch", {
       items: succeededItems.map((i) => ({ sourcePath: i.sourcePath, resultPath: i.resultPath })),
       destinationDir,
+      format: exportOptions.format,
+      background: effectiveBackground(),
+      backgroundImage: effectiveBackgroundImage(),
+      edge: exportOptions.edge,
     });
 
     if (failures.length === 0) {
@@ -650,6 +657,8 @@ removeBgBtn.addEventListener("click", async () => {
     resultImg.src = `${convertFileSrc(result.resultPath)}?t=${Date.now()}`;
     resultImg.classList.remove("hidden");
     resultPlaceholder.classList.add("hidden");
+    // If an edge setting is active, swap in the adjusted version of the result.
+    if (exportOptions.edge !== 0) void refreshResultPreview();
 
     exportBtn.disabled = false;
     setStatus(`Done in ${(result.elapsedMs / 1000).toFixed(1)}s · ${result.width} × ${result.height}px`, "success");
@@ -685,6 +694,401 @@ cancelBtn.addEventListener("click", async () => {
   }
 });
 
+// ---------- Export options (format + background color) ----------
+
+type ExportFormat = "png" | "jpg" | "webp";
+type BackgroundMode = "transparent" | "color" | "image";
+
+interface ExportOptions {
+  format: ExportFormat;
+  bgMode: BackgroundMode;
+  color: string; // always "#rrggbb", lowercase
+  bgImagePath: string | null; // picture to put behind the cutout (Image mode)
+  edge: number; // -100 (sharper) to 100 (softer), 0 = as the AI made it
+}
+
+interface Hsv {
+  h: number; // 0-360, 0 at the top of the wheel, clockwise
+  s: number; // 0-1, 0 at the centre, 1 at the edge
+  v: number; // 0-1, brightness
+}
+
+const EXPORT_STORAGE_KEY = "cutout-export-options";
+const FORMAT_LABELS: Record<ExportFormat, string> = { png: "PNG", jpg: "JPG", webp: "WebP" };
+const FORMAT_DIALOG_NAMES: Record<ExportFormat, string> = {
+  png: "PNG Image",
+  jpg: "JPEG Image",
+  webp: "WebP Image",
+};
+const WHEEL_RADIUS = 80; // matches the 160px .color-wheel in styles.css
+
+const exportPopover = document.getElementById("exportPopover") as HTMLElement;
+const formatToggle = document.getElementById("formatToggle") as HTMLElement;
+const bgModeToggle = document.getElementById("bgModeToggle") as HTMLElement;
+const colorPicker = document.getElementById("colorPicker") as HTMLElement;
+const colorWheel = document.getElementById("colorWheel") as HTMLElement;
+const colorWheelShade = document.getElementById("colorWheelShade") as HTMLElement;
+const colorWheelThumb = document.getElementById("colorWheelThumb") as HTMLElement;
+const valueSlider = document.getElementById("valueSlider") as HTMLInputElement;
+const colorPreview = document.getElementById("colorPreview") as HTMLElement;
+const hexInput = document.getElementById("hexInput") as HTMLInputElement;
+const colorSwatches = document.getElementById("colorSwatches") as HTMLElement;
+const exportHint = document.getElementById("exportHint") as HTMLElement;
+const imagePicker = document.getElementById("imagePicker") as HTMLElement;
+const chooseBgImageBtn = document.getElementById("chooseBgImageBtn") as HTMLButtonElement;
+const bgImageName = document.getElementById("bgImageName") as HTMLElement;
+const edgeSlider = document.getElementById("edgeSlider") as HTMLInputElement;
+const edgeResetBtn = document.getElementById("edgeResetBtn") as HTMLButtonElement;
+const appVersion = document.getElementById("appVersion") as HTMLElement;
+
+/** Accepts "#rgb" or "#rrggbb" (the # is optional); returns "#rrggbb" or null. */
+function normalizeHex(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  let hex = input.trim().replace(/^#/, "");
+  if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+    hex = hex
+      .split("")
+      .map((c) => c + c)
+      .join("");
+  }
+  return /^[0-9a-fA-F]{6}$/.test(hex) ? `#${hex.toLowerCase()}` : null;
+}
+
+function hexToHsv(hex: string): Hsv {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+
+  let h = 0;
+  if (d !== 0) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return { h, s: max === 0 ? 0 : d / max, v: max };
+}
+
+function hsvToHex({ h, s, v }: Hsv): string {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+
+  const part = (n: number) =>
+    Math.round((n + m) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${part(r)}${part(g)}${part(b)}`;
+}
+
+function loadExportOptions(): ExportOptions {
+  const fallback: ExportOptions = {
+    format: "png",
+    bgMode: "transparent",
+    color: "#ffffff",
+    bgImagePath: null,
+    edge: 0,
+  };
+  try {
+    const raw = window.localStorage.getItem(EXPORT_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return {
+      format: parsed.format === "jpg" || parsed.format === "webp" ? parsed.format : "png",
+      bgMode: parsed.bgMode === "color" || parsed.bgMode === "image" ? parsed.bgMode : "transparent",
+      color: normalizeHex(parsed.color) ?? fallback.color,
+      bgImagePath: typeof parsed.bgImagePath === "string" && parsed.bgImagePath ? parsed.bgImagePath : null,
+      edge: typeof parsed.edge === "number" ? Math.max(-100, Math.min(100, Math.round(parsed.edge))) : 0,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveExportOptions() {
+  try {
+    window.localStorage.setItem(EXPORT_STORAGE_KEY, JSON.stringify(exportOptions));
+  } catch (err) {
+    console.warn("couldn't save export options:", err);
+  }
+}
+
+const exportOptions: ExportOptions = loadExportOptions();
+let hsv: Hsv = hexToHsv(exportOptions.color);
+
+/** The color sent to the backend, or null when no solid color is wanted. */
+function effectiveBackground(): string | null {
+  return exportOptions.bgMode === "color" ? exportOptions.color : null;
+}
+
+/** The picture sent to the backend, or null. Image mode with no picture chosen yet means none. */
+function effectiveBackgroundImage(): string | null {
+  return exportOptions.bgMode === "image" ? exportOptions.bgImagePath : null;
+}
+
+/** Solid color the user will get behind the cutout, or null for none. JPG can't be transparent, so it is white. */
+function previewBackground(): string | null {
+  if (exportOptions.bgMode === "color") return exportOptions.color;
+  if (effectiveBackgroundImage()) return null; // the picture is shown instead
+  return exportOptions.format === "jpg" ? "#ffffff" : null;
+}
+
+function renderColorPicker(updateHexField: boolean) {
+  const rad = (hsv.h * Math.PI) / 180;
+  colorWheelThumb.style.left = `${WHEEL_RADIUS + Math.sin(rad) * hsv.s * WHEEL_RADIUS}px`;
+  colorWheelThumb.style.top = `${WHEEL_RADIUS - Math.cos(rad) * hsv.s * WHEEL_RADIUS}px`;
+  colorWheelShade.style.opacity = String(1 - hsv.v);
+
+  valueSlider.value = String(Math.round(hsv.v * 100));
+  valueSlider.style.background = `linear-gradient(to right, #000000, ${hsvToHex({ h: hsv.h, s: hsv.s, v: 1 })})`;
+
+  const hex = hsvToHex(hsv);
+  colorPreview.style.backgroundColor = hex;
+  if (updateHexField) hexInput.value = hex.toUpperCase();
+}
+
+/** Refreshes everything that depends on the export options. */
+function updateExportUi(updateHexField = true) {
+  for (const btn of formatToggle.querySelectorAll<HTMLButtonElement>(".theme-option")) {
+    btn.classList.toggle("active", btn.dataset.format === exportOptions.format);
+  }
+  for (const btn of bgModeToggle.querySelectorAll<HTMLButtonElement>(".theme-option")) {
+    btn.classList.toggle("active", btn.dataset.bgMode === exportOptions.bgMode);
+  }
+
+  const showPicker = exportOptions.bgMode === "color";
+  colorPicker.classList.toggle("hidden", !showPicker);
+  if (showPicker) renderColorPicker(updateHexField);
+
+  const imageMode = exportOptions.bgMode === "image";
+  imagePicker.classList.toggle("hidden", !imageMode);
+  bgImageName.textContent = exportOptions.bgImagePath
+    ? fileNameOf(exportOptions.bgImagePath)
+    : "No image chosen";
+
+  edgeSlider.value = String(exportOptions.edge);
+
+  const jpgNeedsColor = exportOptions.format === "jpg" && exportOptions.bgMode === "transparent";
+  const needsImage = imageMode && !exportOptions.bgImagePath;
+  const hint = jpgNeedsColor
+    ? "JPG can't be transparent, so the background will be white. Choose Color or Image to change it."
+    : needsImage
+      ? "Choose a picture to put behind the cutout. Until then the background stays transparent."
+      : "";
+  exportHint.classList.toggle("hidden", !hint);
+  exportHint.textContent = hint;
+
+  // Summary on both footer buttons (single image and batch).
+  const backdropImage = effectiveBackgroundImage();
+  const preview = previewBackground();
+  const summaryColor = backdropImage
+    ? "Image"
+    : exportOptions.bgMode === "color"
+      ? exportOptions.color.toUpperCase()
+      : preview
+        ? "White"
+        : "Transparent";
+  const summary = `${FORMAT_LABELS[exportOptions.format]} \u00b7 ${summaryColor}`;
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(".export-options-btn")) {
+    const swatch = btn.querySelector<HTMLElement>(".export-swatch");
+    const label = btn.querySelector<HTMLElement>(".export-summary-text");
+    if (label) label.textContent = summary;
+    if (swatch) {
+      swatch.classList.toggle("is-transparent", !backdropImage && preview === null);
+      swatch.style.backgroundColor = preview ?? "";
+      swatch.style.backgroundImage = backdropImage ? `url("${convertFileSrc(backdropImage)}")` : "";
+      swatch.style.backgroundSize = backdropImage ? "cover" : "";
+    }
+  }
+
+  exportBtn.textContent = `Export ${FORMAT_LABELS[exportOptions.format]}`;
+
+  // Show the chosen background behind the result so it's visible before
+  // exporting. A picture is drawn on the <img> itself, so it covers exactly
+  // the area the exported image will cover (and zooms along with it).
+  resultFrame.classList.toggle("checkerboard", !backdropImage && preview === null);
+  resultFrame.style.backgroundColor = backdropImage ? "" : (preview ?? "");
+  resultImg.style.backgroundImage = backdropImage ? `url("${convertFileSrc(backdropImage)}")` : "";
+  resultImg.style.backgroundSize = "cover";
+  resultImg.style.backgroundPosition = "center";
+}
+
+function setColorFromHsv() {
+  exportOptions.color = hsvToHex(hsv);
+  exportOptions.bgMode = "color";
+  saveExportOptions();
+  updateExportUi(false);
+}
+
+function pickFromWheel(e: PointerEvent) {
+  const rect = colorWheel.getBoundingClientRect();
+  const radius = rect.width / 2;
+  const dx = e.clientX - rect.left - radius;
+  const dy = e.clientY - rect.top - radius;
+  let h = (Math.atan2(dx, -dy) * 180) / Math.PI; // 0 at the top, clockwise
+  if (h < 0) h += 360;
+  hsv = { h, s: Math.min(1, Math.hypot(dx, dy) / radius), v: hsv.v };
+  setColorFromHsv();
+}
+
+function setColorFromHex(hex: string) {
+  hsv = hexToHsv(hex);
+  exportOptions.color = hex;
+  exportOptions.bgMode = "color";
+  saveExportOptions();
+  updateExportUi(false);
+}
+
+colorWheel.addEventListener("pointerdown", (e) => {
+  colorWheel.setPointerCapture(e.pointerId);
+  pickFromWheel(e);
+});
+
+colorWheel.addEventListener("pointermove", (e) => {
+  if (colorWheel.hasPointerCapture(e.pointerId)) pickFromWheel(e);
+});
+
+valueSlider.addEventListener("input", () => {
+  hsv = { ...hsv, v: Number(valueSlider.value) / 100 };
+  setColorFromHsv();
+});
+
+// While typing, only a complete 6-digit value is applied, so a half-typed
+// "#ff" doesn't flicker the preview. Short "#abc" forms are accepted on
+// Enter or when the field loses focus.
+hexInput.addEventListener("input", () => {
+  const digits = hexInput.value.trim().replace(/^#/, "");
+  if (digits.length !== 6) return;
+  const hex = normalizeHex(digits);
+  if (hex) setColorFromHex(hex);
+});
+
+hexInput.addEventListener("blur", () => {
+  const hex = normalizeHex(hexInput.value);
+  if (hex) setColorFromHex(hex);
+  hexInput.value = exportOptions.color.toUpperCase();
+});
+
+hexInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") hexInput.blur();
+});
+
+colorSwatches.addEventListener("click", (e) => {
+  const swatch = (e.target as HTMLElement).closest<HTMLButtonElement>(".color-swatch");
+  const hex = normalizeHex(swatch?.dataset.color);
+  if (hex) {
+    setColorFromHex(hex);
+    hexInput.value = hex.toUpperCase();
+  }
+});
+
+formatToggle.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".theme-option");
+  const format = btn?.dataset.format;
+  if (format !== "png" && format !== "jpg" && format !== "webp") return;
+  exportOptions.format = format;
+  saveExportOptions();
+  updateExportUi();
+});
+
+bgModeToggle.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".theme-option");
+  const mode = btn?.dataset.bgMode;
+  if (mode !== "transparent" && mode !== "color" && mode !== "image") return;
+  exportOptions.bgMode = mode;
+  saveExportOptions();
+  updateExportUi();
+});
+
+chooseBgImageBtn.addEventListener("click", async () => {
+  try {
+    const selected = await open({
+      multiple: false,
+      title: "Choose a background picture",
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "gif"] }],
+    });
+    if (typeof selected !== "string") return;
+    exportOptions.bgImagePath = selected;
+    exportOptions.bgMode = "image";
+    saveExportOptions();
+    updateExportUi();
+  } catch (err) {
+    console.error("background image dialog failed:", err);
+    showToast(readableError(err), true);
+  }
+});
+
+// Edge softness. The slider only changes how the exported file is made; the
+// Result pane shows the effect through a backend-built preview, requested
+// after the slider pauses so dragging stays smooth on large images.
+let edgeTimer: number | undefined;
+let edgeRequestId = 0;
+
+async function refreshResultPreview() {
+  const path = currentResultPath;
+  if (!path) return;
+
+  const requestId = ++edgeRequestId;
+  try {
+    const shown =
+      exportOptions.edge === 0
+        ? path
+        : await invoke<string>("preview_edges", { resultPath: path, edge: exportOptions.edge });
+    // A newer request or a different image has taken over since this started.
+    if (requestId !== edgeRequestId || currentResultPath !== path) return;
+    resultImg.src = `${convertFileSrc(shown)}?t=${Date.now()}`;
+  } catch (err) {
+    console.error("preview_edges failed:", err);
+    showToast(readableError(err), true);
+  }
+}
+
+edgeSlider.addEventListener("input", () => {
+  exportOptions.edge = Number(edgeSlider.value);
+  saveExportOptions();
+  window.clearTimeout(edgeTimer);
+  edgeTimer = window.setTimeout(() => void refreshResultPreview(), 250);
+});
+
+edgeResetBtn.addEventListener("click", () => {
+  exportOptions.edge = 0;
+  edgeSlider.value = "0";
+  saveExportOptions();
+  void refreshResultPreview();
+});
+
+function toggleExportPopover() {
+  const opening = exportPopover.classList.contains("hidden");
+  exportPopover.classList.toggle("hidden", !opening);
+  if (opening) updateExportUi();
+}
+
+for (const btn of document.querySelectorAll<HTMLButtonElement>(".export-options-btn")) {
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation(); // so the click-away handler below doesn't close it again
+    toggleExportPopover();
+  });
+}
+
+document.addEventListener("click", (e) => {
+  if (exportPopover.classList.contains("hidden")) return;
+  if (!exportPopover.contains(e.target as Node)) exportPopover.classList.add("hidden");
+});
+
 // ---------- Export ----------
 
 exportBtn.addEventListener("click", async () => {
@@ -698,11 +1102,12 @@ exportBtn.addEventListener("click", async () => {
   removeBgBtn.disabled = true;
 
   const baseName = currentImagePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "cutout";
+  const format = exportOptions.format;
 
   try {
     const destination = await save({
-      defaultPath: lastExportDir ? `${lastExportDir}/${baseName}-cutout.png` : `${baseName}-cutout.png`,
-      filters: [{ name: "PNG Image", extensions: ["png"] }],
+      defaultPath: lastExportDir ? `${lastExportDir}/${baseName}-cutout.${format}` : `${baseName}-cutout.${format}`,
+      filters: [{ name: FORMAT_DIALOG_NAMES[format], extensions: [format] }],
     });
     if (!destination) return;
 
@@ -715,6 +1120,10 @@ exportBtn.addEventListener("click", async () => {
       originalPath: currentImagePath,
       resultPath: currentResultPath,
       destination,
+      format,
+      background: effectiveBackground(),
+      backgroundImage: effectiveBackgroundImage(),
+      edge: exportOptions.edge,
     });
 
     const exportedKb = Math.round(info.exportedSizeBytes / 1024);
@@ -788,7 +1197,9 @@ window.addEventListener("keydown", (e) => {
       batchStartBtn.click();
     }
   } else if (e.key === "Escape") {
-    if (!settingsOverlay.classList.contains("hidden")) {
+    if (!exportPopover.classList.contains("hidden")) {
+      exportPopover.classList.add("hidden");
+    } else if (!settingsOverlay.classList.contains("hidden")) {
       settingsOverlay.classList.add("hidden");
     } else if (isProcessing && !cancelBtn.classList.contains("hidden")) {
       // Mid-run, Esc cancels rather than resetting the screen out from under
@@ -849,6 +1260,21 @@ settingsOverlay.addEventListener("click", (e) => {
     settingsOverlay.classList.add("hidden");
   }
 });
+
+// Community links (Discord / feedback / GitHub). Opened through the opener
+// plugin so they launch in the user's default browser, not inside the app.
+for (const link of settingsOverlay.querySelectorAll<HTMLButtonElement>(".community-link")) {
+  link.addEventListener("click", async () => {
+    const url = link.dataset.url;
+    if (!url) return;
+    try {
+      await openUrl(url);
+    } catch (err) {
+      console.error("openUrl failed:", err);
+      showToast("Couldn't open the link in your browser.", true);
+    }
+  });
+}
 
 // ---------- Model picker ----------
 
@@ -1023,4 +1449,13 @@ zoomResetBtn.addEventListener("click", () => resetZoom());
 
 applyTheme(loadStoredTheme());
 resetWorkspace();
+updateExportUi();
+
+// Show the app version in Settings. If it can't be read, the line stays hidden.
+getVersion()
+  .then((version) => {
+    appVersion.textContent = `Cutout v${version}`;
+    appVersion.classList.remove("hidden");
+  })
+  .catch((err) => console.warn("couldn't read app version:", err));
 void initModelPicker();

@@ -9,7 +9,11 @@ subscription, no resolution limit. Everything runs offline.
 - Batch mode: pick several images or a whole folder (subfolders included) and
   export everything at once
 - Four AI models, from fast to best quality (see below)
-- Output keeps the original resolution, saved as a transparent PNG
+- Output keeps the original resolution. Export as PNG, JPG or WebP, with a
+  transparent background, any solid color from a color wheel, or a picture of
+  your choice behind the cutout
+- Edge slider to make the cutout's edge sharper or softer
+- Remembers its window size and position
 - Zoom and pan the preview, Dark / Light / System theme
 - Cancel any run at any time (Esc works too)
 

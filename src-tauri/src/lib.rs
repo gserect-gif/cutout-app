@@ -684,10 +684,14 @@ struct ExportInfo {
 }
 
 #[tauri::command]
-fn export_png(
+async fn export_png(
     original_path: Option<String>,
     result_path: String,
     destination: String,
+    format: Option<String>,
+    background: Option<String>,
+    background_image: Option<String>,
+    edge: Option<i32>,
 ) -> Result<ExportInfo, AppError> {
     if !std::path::Path::new(&result_path).exists() {
         return Err(AppError::Io(
@@ -696,18 +700,101 @@ fn export_png(
         ));
     }
 
-    let original_size_bytes = original_path.and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
+    let format = image_ops::ExportFormat::from_key(format.as_deref());
+    let color = background.as_deref().and_then(image_ops::parse_hex_color);
+    let edge = edge.unwrap_or(0);
 
-    std::fs::copy(&result_path, &destination).map_err(|e| AppError::Io(e.to_string()))?;
+    // Encoding a full-resolution JPG/WebP can take a moment, so it runs on a
+    // blocking thread to keep the UI responsive.
+    tauri::async_runtime::spawn_blocking(move || {
+        let original_size_bytes = original_path
+            .and_then(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len());
 
-    let exported_size_bytes = std::fs::metadata(&destination)
-        .map_err(|e| AppError::Io(e.to_string()))?
-        .len();
+        let backdrop = load_backdrop_image(background_image.as_deref())?;
+        let render = image_ops::ExportRender {
+            format,
+            color,
+            image: backdrop.as_ref(),
+            edge,
+        };
+        image_ops::export_cutout(&result_path, std::path::Path::new(&destination), &render)?;
 
-    Ok(ExportInfo {
-        original_size_bytes,
-        exported_size_bytes,
+        let exported_size_bytes = std::fs::metadata(&destination)
+            .map_err(|e| AppError::Io(e.to_string()))?
+            .len();
+
+        Ok(ExportInfo {
+            original_size_bytes,
+            exported_size_bytes,
+        })
     })
+    .await
+    .map_err(|e| AppError::Io(format!("export task panicked: {e}")))?
+}
+
+/// Decodes the picture the user chose to put behind the cutout, or returns
+/// `None` when no picture was chosen.
+fn load_backdrop_image(path: Option<&str>) -> Result<Option<DynamicImage>, AppError> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    if !std::path::Path::new(path).exists() {
+        return Err(AppError::FileNotFound(path.to_string()));
+    }
+    image::open(path)
+        .map(Some)
+        .map_err(|e| AppError::DecodeFailed(format!("background image: {e}")))
+}
+
+/// Path of the most recent edge-refined preview, so the previous one can be
+/// deleted when a new one is written (the slider can fire many times).
+static LAST_REFINED_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Builds the cutout as it would look with the given edge setting, so the
+/// Result pane can show the effect of the slider before exporting. Returns
+/// the original result path untouched when `edge` is 0.
+#[tauri::command]
+async fn preview_edges(
+    app: tauri::AppHandle,
+    result_path: String,
+    edge: i32,
+) -> Result<String, AppError> {
+    if edge == 0 {
+        return Ok(result_path);
+    }
+    if !std::path::Path::new(&result_path).exists() {
+        return Err(AppError::Io(
+            "The processed image is no longer available. Try removing the background again."
+                .to_string(),
+        ));
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut rgba = image::open(&result_path)
+            .map_err(|e| AppError::DecodeFailed(format!("result image: {e}")))?
+            .to_rgba8();
+        image_ops::refine_edges(&mut rgba, edge);
+
+        let dir = results_dir(&app)?.join("refined");
+        std::fs::create_dir_all(&dir).map_err(|e| AppError::Io(e.to_string()))?;
+        let n = RESULT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let refined_path = dir.join(format!("refined-{}-{n}.png", std::process::id()));
+
+        DynamicImage::ImageRgba8(rgba)
+            .save_with_format(&refined_path, image::ImageFormat::Png)
+            .map_err(|e| AppError::EncodeFailed(e.to_string()))?;
+
+        if let Ok(mut last) = LAST_REFINED_PATH.lock() {
+            if let Some(old) = last.replace(refined_path.clone()) {
+                let _ = std::fs::remove_file(old);
+            }
+        }
+
+        Ok(refined_path.display().to_string())
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("edge preview task panicked: {e}")))?
 }
 
 /// Writes raw image bytes (from a clipboard paste in the frontend, via the
@@ -754,37 +841,59 @@ struct BatchExportItem {
 /// copy failures (e.g. a locked file) rather than aborting the whole export,
 /// consistent with the batch-processing step's own skip-and-continue design.
 #[tauri::command]
-fn export_batch(
+async fn export_batch(
     items: Vec<BatchExportItem>,
     destination_dir: String,
+    format: Option<String>,
+    background: Option<String>,
+    background_image: Option<String>,
+    edge: Option<i32>,
 ) -> Result<Vec<String>, AppError> {
-    let dest_dir = PathBuf::from(&destination_dir);
-    std::fs::create_dir_all(&dest_dir).map_err(|e| AppError::Io(e.to_string()))?;
+    let format = image_ops::ExportFormat::from_key(format.as_deref());
+    let color = background.as_deref().and_then(image_ops::parse_hex_color);
+    let edge = edge.unwrap_or(0);
+    let ext = format.extension();
 
-    let mut failures = Vec::new();
+    tauri::async_runtime::spawn_blocking(move || {
+        let dest_dir = PathBuf::from(&destination_dir);
+        std::fs::create_dir_all(&dest_dir).map_err(|e| AppError::Io(e.to_string()))?;
 
-    for item in items {
-        let base_name = PathBuf::from(&item.source_path)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "cutout".to_string());
+        // Decoded once and reused for every image in the batch.
+        let backdrop = load_backdrop_image(background_image.as_deref())?;
+        let render = image_ops::ExportRender {
+            format,
+            color,
+            image: backdrop.as_ref(),
+            edge,
+        };
 
-        let mut target = dest_dir.join(format!("{base_name}-cutout.png"));
-        // Avoid overwriting if two source files share a name (e.g. two
-        // different folders both containing "photo.jpg" selected together).
-        let mut suffix = 1;
-        while target.exists() {
-            target = dest_dir.join(format!("{base_name}-cutout-{suffix}.png"));
-            suffix += 1;
+        let mut failures = Vec::new();
+
+        for item in items {
+            let base_name = PathBuf::from(&item.source_path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "cutout".to_string());
+
+            let mut target = dest_dir.join(format!("{base_name}-cutout.{ext}"));
+            // Avoid overwriting if two source files share a name (e.g. two
+            // different folders both containing "photo.jpg" selected together).
+            let mut suffix = 1;
+            while target.exists() {
+                target = dest_dir.join(format!("{base_name}-cutout-{suffix}.{ext}"));
+                suffix += 1;
+            }
+
+            if let Err(e) = image_ops::export_cutout(&item.result_path, &target, &render) {
+                eprintln!("[batch export] failed for {}: {e}", item.source_path);
+                failures.push(item.source_path);
+            }
         }
 
-        if let Err(e) = std::fs::copy(&item.result_path, &target) {
-            eprintln!("[batch export] failed for {}: {e}", item.source_path);
-            failures.push(item.source_path);
-        }
-    }
-
-    Ok(failures)
+        Ok(failures)
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("export task panicked: {e}")))?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -805,6 +914,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .manage(ImageCache(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             load_image,
@@ -817,6 +935,7 @@ pub fn run() {
             cancel_processing,
             export_png,
             export_batch,
+            preview_edges,
             save_pasted_image
         ])
         .run(tauri::generate_context!())

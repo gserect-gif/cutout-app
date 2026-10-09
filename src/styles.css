@@ -723,3 +723,324 @@ body {
   background: var(--accent);
   color: #0b0e14;
 }
+
+/* ---------- Community links (Settings) ---------- */
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.community-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.community-link {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 8px;
+  margin: 0 -8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-1);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.community-link:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
+}
+
+.community-link:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.community-link-arrow {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.community-link:hover .community-link-arrow {
+  color: var(--text-0);
+}
+
+/* ---------- Export options (format + background color) ---------- */
+
+.export-options-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.export-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border-hover);
+  flex-shrink: 0;
+  background-color: var(--bg-1);
+}
+
+/* Transparent is shown as a tiny checkerboard, same idea as the result pane. */
+.export-swatch.is-transparent {
+  background-image: linear-gradient(45deg, var(--text-2) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--text-2) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--text-2) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--text-2) 75%);
+  background-size: 6px 6px;
+  background-position: 0 0, 0 3px, 3px -3px, -3px 0;
+}
+
+.export-popover {
+  position: fixed;
+  right: 20px;
+  bottom: 68px;
+  width: 280px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  z-index: 150;
+}
+
+.export-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.export-popover .theme-toggle {
+  width: 100%;
+}
+
+.export-popover .theme-option {
+  flex: 1;
+}
+
+.export-hint {
+  margin: 0;
+}
+
+.color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+/* Hue runs around the circle (0deg = top, clockwise) and saturation grows
+   from the white centre to the full colour at the edge. The shade layer on
+   top darkens it as the brightness slider goes down. */
+.color-wheel {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  margin: 0 auto;
+  background: radial-gradient(circle closest-side, #ffffff 0%, rgba(255, 255, 255, 0) 100%),
+    conic-gradient(from 0deg, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+  cursor: crosshair;
+  touch-action: none;
+  border: 1px solid var(--border);
+}
+
+.color-wheel-shade {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #000000;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.color-wheel-thumb {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.value-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 10px;
+  margin: 0;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  outline: none;
+  cursor: pointer;
+}
+
+.value-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+}
+
+.color-hex-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-preview {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-hover);
+  flex-shrink: 0;
+}
+
+.hex-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-0);
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-transform: uppercase;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.hex-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.color-swatches {
+  display: flex;
+  gap: 8px;
+}
+
+.color-swatch {
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-hover);
+  cursor: pointer;
+}
+
+.color-swatch:hover {
+  border-color: var(--accent);
+}
+
+.settings-version {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.image-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.bg-image-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edge-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  margin: 6px 0;
+  border-radius: 3px;
+  background: var(--bg-3);
+  outline: none;
+  cursor: pointer;
+}
+
+.edge-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-1);
+  box-shadow: 0 0 0 1px var(--border-hover);
+  cursor: pointer;
+}
+
+.edge-labels {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.edge-reset {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.edge-reset:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
+}

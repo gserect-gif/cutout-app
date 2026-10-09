@@ -33,6 +33,24 @@
           </div>
         </div>
         <p class="settings-hint">Cutout runs entirely on this device. No images or data ever leave your computer.</p>
+        <div class="settings-section">
+          <span class="settings-section-title">Community</span>
+          <div class="community-links">
+            <button class="community-link" data-url="https://discord.gg/ZezUkcH5Ep">
+              <span>Join Discord</span><span class="community-link-arrow" aria-hidden="true">&#8599;</span>
+            </button>
+            <button class="community-link" data-url="https://github.com/gserect-gif/cutout-app/issues">
+              <span>Send Feedback</span><span class="community-link-arrow" aria-hidden="true">&#8599;</span>
+            </button>
+            <button class="community-link" data-url="https://github.com/gserect-gif/cutout-app">
+              <span>GitHub</span><span class="community-link-arrow" aria-hidden="true">&#8599;</span>
+            </button>
+            <button class="community-link" data-url="https://github.com/gserect-gif/cutout-app/releases">
+              <span>Check for updates</span><span class="community-link-arrow" aria-hidden="true">&#8599;</span>
+            </button>
+          </div>
+          <p class="settings-version hidden" id="appVersion"></p>
+        </div>
       </div>
     </div>
 
@@ -75,6 +93,9 @@
         <div class="workspace-footer">
           <span id="batchStatusText" class="status-text"></span>
           <div class="footer-actions">
+            <button id="batchExportOptionsBtn" class="btn btn-ghost export-options-btn" title="Export format and background">
+              <span class="export-swatch"></span><span class="export-summary-text">PNG · Transparent</span>
+            </button>
             <button id="batchExportBtn" class="btn btn-primary" disabled>Export All</button>
           </div>
         </div>
@@ -129,6 +150,9 @@
         <div class="workspace-footer">
           <span id="statusText" class="status-text"></span>
           <div class="footer-actions">
+            <button id="exportOptionsBtn" class="btn btn-ghost export-options-btn" title="Export format and background">
+              <span class="export-swatch"></span><span class="export-summary-text">PNG · Transparent</span>
+            </button>
             <button id="exportBtn" class="btn btn-primary" disabled>Export PNG</button>
           </div>
         </div>
@@ -136,6 +160,59 @@
     </main>
 
     <div id="toast" class="toast hidden"></div>
+
+    <!-- Export options popover (shared by single and batch export) -->
+    <div id="exportPopover" class="export-popover hidden" role="dialog" aria-label="Export options">
+      <div class="export-section">
+        <span class="settings-section-title">Format</span>
+        <div class="theme-toggle" id="formatToggle">
+          <button class="theme-option" data-format="png">PNG</button>
+          <button class="theme-option" data-format="jpg">JPG</button>
+          <button class="theme-option" data-format="webp">WebP</button>
+        </div>
+      </div>
+      <div class="export-section">
+        <span class="settings-section-title">Background</span>
+        <div class="theme-toggle" id="bgModeToggle">
+          <button class="theme-option" data-bg-mode="transparent">Transparent</button>
+          <button class="theme-option" data-bg-mode="color">Color</button>
+          <button class="theme-option" data-bg-mode="image">Image</button>
+        </div>
+        <div id="colorPicker" class="color-picker hidden">
+          <div class="color-wheel" id="colorWheel">
+            <div class="color-wheel-shade" id="colorWheelShade"></div>
+            <div class="color-wheel-thumb" id="colorWheelThumb"></div>
+          </div>
+          <input type="range" id="valueSlider" class="value-slider" min="0" max="100" value="100" aria-label="Brightness" />
+          <div class="color-hex-row">
+            <span class="color-preview" id="colorPreview"></span>
+            <input type="text" id="hexInput" class="hex-input" maxlength="7" spellcheck="false" aria-label="Hex color" />
+          </div>
+          <div class="color-swatches" id="colorSwatches">
+            <button class="color-swatch" data-color="#ffffff" style="background:#ffffff" aria-label="White"></button>
+            <button class="color-swatch" data-color="#000000" style="background:#000000" aria-label="Black"></button>
+            <button class="color-swatch" data-color="#f3f4f6" style="background:#f3f4f6" aria-label="Light gray"></button>
+            <button class="color-swatch" data-color="#34c759" style="background:#34c759" aria-label="Green"></button>
+            <button class="color-swatch" data-color="#0a84ff" style="background:#0a84ff" aria-label="Blue"></button>
+            <button class="color-swatch" data-color="#ff3b30" style="background:#ff3b30" aria-label="Red"></button>
+          </div>
+        </div>
+        <div id="imagePicker" class="image-picker hidden">
+          <button id="chooseBgImageBtn" class="btn btn-ghost btn-small">Choose image&hellip;</button>
+          <span id="bgImageName" class="bg-image-name"></span>
+        </div>
+        <p class="settings-hint export-hint hidden" id="exportHint"></p>
+      </div>
+      <div class="export-section">
+        <span class="settings-section-title">Edges</span>
+        <input type="range" id="edgeSlider" class="edge-slider" min="-100" max="100" step="5" value="0" aria-label="Edge softness" />
+        <div class="edge-labels">
+          <span>Sharper</span>
+          <button id="edgeResetBtn" class="edge-reset">Reset</button>
+          <span>Softer</span>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
