@@ -56,6 +56,12 @@ Licenses and credits for each model are in `THIRD_PARTY_NOTICES.md`.
 
 ## Video
 
+
+
+Uploading cutout-v0.1.1-demo.mp4…
+
+
+
 https://github.com/user-attachments/assets/6539456f-e150-4a4b-8e6d-6c7438f2d857
 
 ## Privacy
