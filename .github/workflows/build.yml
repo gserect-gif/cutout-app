@@ -111,6 +111,42 @@ jobs:
           releaseDraft: true
           args: ${{ matrix.args }}
 
+      # The AppImage catalog's test bot found the Linux AppImage can't start
+      # for other users: some files inside it lack read/execute permission for
+      # anyone but the build user. Unpack it, fix the permissions, and pack it
+      # again. If this step fails the job turns red on purpose, so a broken
+      # repack is visible instead of silently shipping the original file.
+      - name: Fix AppImage permissions (Linux)
+        id: fixappimage
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        working-directory: src-tauri/target/release/bundle/appimage
+        run: |
+          set -euo pipefail
+          APPIMAGE="$(ls *.AppImage | head -n 1)"
+          chmod +x "$APPIMAGE"
+          "./$APPIMAGE" --appimage-extract > /dev/null
+          chmod -R a+rX squashfs-root
+          chmod a+x squashfs-root/AppRun
+          if [ -f squashfs-root/AppRun.wrapped ]; then chmod a+x squashfs-root/AppRun.wrapped; fi
+          if [ -d squashfs-root/usr/bin ]; then find squashfs-root/usr/bin -type f -exec chmod a+x {} +; fi
+          wget -q -O appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          rm "$APPIMAGE"
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run squashfs-root "$APPIMAGE"
+          rm -rf squashfs-root appimagetool
+          ls -l
+
+      # Swap the repaired AppImage into the draft release (same file name, so
+      # it replaces the one tauri-action uploaded).
+      - name: Replace AppImage on the draft release (Linux)
+        if: matrix.os == 'ubuntu-24.04' && startsWith(github.ref, 'refs/tags/') && steps.fixappimage.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: src-tauri/target/release/bundle/appimage/*.AppImage
+
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
