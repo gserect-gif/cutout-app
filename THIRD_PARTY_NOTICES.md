@@ -28,6 +28,8 @@ Notes:
 | Library | License |
 | --- | --- |
 | Tauri | MIT or Apache-2.0 |
+| Tauri plugins (dialog, opener, window-state) | MIT or Apache-2.0 |
+| tauri-plugin-drag / drag-rs (CrabNebula) | MIT or Apache-2.0 |
 | ONNX Runtime (via the `ort` crate) | MIT |
 | `image` crate | MIT or Apache-2.0 |
 

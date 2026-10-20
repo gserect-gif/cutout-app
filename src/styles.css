@@ -1044,3 +1044,160 @@ body {
   background: var(--bg-2);
   color: var(--text-0);
 }
+
+.size-select {
+  width: 100%;
+}
+
+/* ---------- Touch-up brush ---------- */
+
+.touchup-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 4px 0;
+}
+
+.touchup-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.touchup-size .edge-slider {
+  width: 120px;
+  margin: 0;
+}
+
+.touchup-hint {
+  flex: 1;
+  min-width: 140px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.touchup-canvas {
+  position: absolute;
+  z-index: 5;
+  cursor: none;
+  touch-action: none;
+}
+
+.brush-cursor {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  border-radius: 50%;
+  border: 1.5px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -50%);
+}
+
+#touchupBtn.active-tool {
+  background: var(--bg-2);
+  color: var(--text-0);
+  border-color: var(--accent);
+}
+
+#dragBtn:not(:disabled) {
+  cursor: grab;
+}
+
+#dragBtn:not(:disabled):active {
+  cursor: grabbing;
+}
+
+/* ---------- Added controls ---------- */
+
+/* The Settings panel got longer (custom models), so it scrolls on short windows. */
+.settings-panel {
+  max-height: calc(100vh - 70px);
+  overflow-y: auto;
+}
+
+.settings-panel > * {
+  flex-shrink: 0;
+}
+
+.text-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-0);
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.color-input {
+  width: 34px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Before/after compare: the original sits over the left part of the Result. */
+.pane-frame img.compare-img {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.compare-slider {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  width: 60%;
+  margin: 0;
+  transform: translateX(-50%);
+  z-index: 6;
+}
+
+#compareBtn.active-tool {
+  background: var(--bg-2);
+  color: var(--text-0);
+  border-color: var(--accent);
+}
+
+/* Custom models list in Settings */
+.custom-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.custom-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.custom-model-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

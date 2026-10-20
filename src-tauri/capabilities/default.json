@@ -10,6 +10,7 @@
     "dialog:allow-save",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
+    "drag:default",
     {
       "identifier": "opener:allow-open-url",
       "allow": [

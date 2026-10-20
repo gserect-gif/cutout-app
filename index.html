@@ -51,6 +51,23 @@
           </div>
           <p class="settings-version hidden" id="appVersion"></p>
         </div>
+        <div class="settings-section">
+          <span class="settings-section-title">Custom models</span>
+          <p class="settings-hint" style="margin: 0">Add your own ONNX background-removal model. It shows up in the model list next to Fast, Balanced and Best.</p>
+          <button id="addModelChooseBtn" class="btn btn-ghost btn-small">Choose .onnx file&hellip;</button>
+          <span id="addModelFile" class="bg-image-name">No file chosen</span>
+          <input id="addModelName" class="text-input" type="text" maxlength="60" placeholder="Name" aria-label="Model name" />
+          <input id="addModelDesc" class="text-input" type="text" maxlength="200" placeholder="Description (shown when you hover the model)" aria-label="Model description" />
+          <select id="addModelKind" class="model-select size-select" aria-label="Model type">
+            <option value="standard">BiRefNet style (1024)</option>
+            <option value="isnet">IS-Net style (1024)</option>
+            <option value="u2net">U2-Net style (320)</option>
+          </select>
+          <input id="addModelSize" class="text-input" type="number" min="64" max="4096" value="1024" aria-label="Model input size in pixels" />
+          <p class="settings-hint" style="margin: 0">Pick the type your model was trained like, and its square input size (check the model's page). A wrong size or type gives bad cutouts or an error.</p>
+          <button id="addModelBtn" class="btn btn-primary btn-small">Add model</button>
+          <div id="customModelList" class="custom-model-list"></div>
+        </div>
       </div>
     </div>
 
@@ -136,6 +153,9 @@
             <span class="pane-label">Result</span>
             <div class="pane-frame checkerboard zoomable" id="resultFrame">
               <img id="resultImg" alt="Background removed result" class="hidden" draggable="false" />
+              <canvas id="touchupCanvas" class="touchup-canvas hidden"></canvas>
+              <img id="compareImg" class="compare-img hidden" alt="Original image, for comparing" draggable="false" />
+              <input type="range" id="compareSlider" class="edge-slider compare-slider hidden" min="0" max="100" value="50" aria-label="Compare the original and the cutout" />
               <div id="resultPlaceholder" class="result-placeholder">
                 <p>Click "Remove Background" to see your cutout</p>
               </div>
@@ -147,9 +167,28 @@
           </div>
         </div>
 
+        <div id="touchupBar" class="touchup-bar hidden">
+          <div class="theme-toggle" id="brushModeToggle">
+            <button class="theme-option active" data-brush="restore">Restore</button>
+            <button class="theme-option" data-brush="erase">Erase</button>
+          </div>
+          <label class="touchup-size">
+            <span>Size</span>
+            <input type="range" id="brushSize" class="edge-slider" min="6" max="120" value="30" aria-label="Brush size" />
+          </label>
+          <button id="touchupUndoBtn" class="btn btn-ghost btn-small" disabled>Undo</button>
+          <button id="touchupRedoBtn" class="btn btn-ghost btn-small" disabled>Redo</button>
+          <span class="touchup-hint">Restore brings back what the AI removed. Erase removes what it kept. Keys: [ ] size, E swap, Ctrl+Z undo.</span>
+          <button id="touchupDoneBtn" class="btn btn-primary btn-small">Done</button>
+        </div>
+
         <div class="workspace-footer">
           <span id="statusText" class="status-text"></span>
           <div class="footer-actions">
+            <button id="compareBtn" class="btn btn-ghost" disabled title="Slide between the original and the cutout">Compare</button>
+            <button id="touchupBtn" class="btn btn-ghost" disabled title="Fix mistakes with a brush">Touch up</button>
+            <button id="copyBtn" class="btn btn-ghost" disabled title="Copy the cutout to the clipboard">Copy</button>
+            <button id="dragBtn" class="btn btn-ghost" disabled title="Press and drag this into another app to drop the finished image there">Drag out</button>
             <button id="exportOptionsBtn" class="btn btn-ghost export-options-btn" title="Export format and background">
               <span class="export-swatch"></span><span class="export-summary-text">PNG · Transparent</span>
             </button>
@@ -160,9 +199,20 @@
     </main>
 
     <div id="toast" class="toast hidden"></div>
+    <div id="brushCursor" class="brush-cursor hidden"></div>
 
     <!-- Export options popover (shared by single and batch export) -->
-    <div id="exportPopover" class="export-popover hidden" role="dialog" aria-label="Export options">
+    <div id="exportPopover" class="export-popover hidden" role="dialog" aria-label="Export options" style="max-height: calc(100vh - 90px); overflow-y: auto;">
+      <div class="export-section">
+        <span class="settings-section-title">Presets</span>
+        <select id="presetSelect" class="model-select size-select" aria-label="Saved presets"></select>
+        <div class="image-picker">
+          <input id="presetName" class="text-input" type="text" maxlength="40" placeholder="Name this setup" aria-label="Preset name" />
+          <button id="presetSaveBtn" class="btn btn-ghost btn-small">Save</button>
+          <button id="presetDeleteBtn" class="btn btn-ghost btn-small">Delete</button>
+        </div>
+        <p class="settings-hint">A preset remembers every setting below, so you can bring a whole look back with one click.</p>
+      </div>
       <div class="export-section">
         <span class="settings-section-title">Format</span>
         <div class="theme-toggle" id="formatToggle">
@@ -178,6 +228,10 @@
           <button class="theme-option" data-bg-mode="color">Color</button>
           <button class="theme-option" data-bg-mode="image">Image</button>
         </div>
+        <div class="theme-toggle" id="bgModeToggle2">
+          <button class="theme-option" data-bg-mode="gradient">Gradient</button>
+          <button class="theme-option" data-bg-mode="blur">Blurred photo</button>
+        </div>
         <div id="colorPicker" class="color-picker hidden">
           <div class="color-wheel" id="colorWheel">
             <div class="color-wheel-shade" id="colorWheelShade"></div>
@@ -187,6 +241,7 @@
           <div class="color-hex-row">
             <span class="color-preview" id="colorPreview"></span>
             <input type="text" id="hexInput" class="hex-input" maxlength="7" spellcheck="false" aria-label="Hex color" />
+            <button id="eyedropperBtn" class="btn btn-ghost btn-small" title="Pick a color from anywhere on the screen, for example from the photo">Pick</button>
           </div>
           <div class="color-swatches" id="colorSwatches">
             <button class="color-swatch" data-color="#ffffff" style="background:#ffffff" aria-label="White"></button>
@@ -201,6 +256,25 @@
           <button id="chooseBgImageBtn" class="btn btn-ghost btn-small">Choose image&hellip;</button>
           <span id="bgImageName" class="bg-image-name"></span>
         </div>
+        <div id="gradientPicker" class="color-picker hidden">
+          <div class="image-picker">
+            <input type="color" id="gradientFrom" class="color-input" aria-label="Gradient start color" />
+            <input type="color" id="gradientTo" class="color-input" aria-label="Gradient end color" />
+            <span class="bg-image-name">Start and end colors</span>
+          </div>
+          <input type="range" id="gradientAngle" class="edge-slider" min="0" max="360" step="5" value="135" aria-label="Gradient angle" />
+          <div class="edge-labels">
+            <span>Angle</span>
+          </div>
+        </div>
+        <div id="blurPicker" class="color-picker hidden">
+          <input type="range" id="blurSlider" class="edge-slider" min="5" max="100" step="5" value="50" aria-label="Background blur strength" />
+          <div class="edge-labels">
+            <span>Soft</span>
+            <span>Strong</span>
+          </div>
+          <p class="settings-hint" style="margin: 0">Puts a blurred copy of your original photo behind the cutout.</p>
+        </div>
         <p class="settings-hint export-hint hidden" id="exportHint"></p>
       </div>
       <div class="export-section">
@@ -211,6 +285,81 @@
           <button id="edgeResetBtn" class="edge-reset">Reset</button>
           <span>Softer</span>
         </div>
+      </div>
+      <div class="export-section">
+        <span class="settings-section-title">Edge position</span>
+        <input type="range" id="growSlider" class="edge-slider" min="-100" max="100" step="5" value="0" aria-label="Shrink or grow the cutout edge" />
+        <div class="edge-labels">
+          <span>Shrink</span>
+          <span>Grow</span>
+        </div>
+      </div>
+      <div class="export-section">
+        <span class="settings-section-title">Defringe</span>
+        <input type="range" id="defringeSlider" class="edge-slider" min="0" max="100" step="5" value="0" aria-label="Color defringe strength" />
+        <div class="edge-labels">
+          <span>Off</span>
+          <span>Strong</span>
+        </div>
+        <p class="settings-hint">Fixes edge pixels that still carry the old background color (halos).</p>
+      </div>
+      <div class="export-section">
+        <span class="settings-section-title">Shadow</span>
+        <input type="range" id="shadowSlider" class="edge-slider" min="0" max="100" step="5" value="0" aria-label="Shadow strength" />
+        <div class="edge-labels">
+          <span>Off</span>
+          <span>Strong</span>
+        </div>
+      </div>
+      <div class="export-section">
+        <span class="settings-section-title">Sticker outline</span>
+        <input type="range" id="outlineSlider" class="edge-slider" min="0" max="100" step="5" value="0" aria-label="Outline width" />
+        <div class="edge-labels">
+          <span>Off</span>
+          <span>Thick</span>
+        </div>
+        <div class="image-picker">
+          <input type="color" id="outlineColor" class="color-input" aria-label="Outline color" />
+          <span class="bg-image-name">Outline color</span>
+        </div>
+      </div>
+      <div class="export-section">
+        <span class="settings-section-title">Color adjust</span>
+        <input type="range" id="brightnessSlider" class="edge-slider" min="-100" max="100" step="5" value="0" aria-label="Brightness" />
+        <div class="edge-labels"><span>Brightness</span></div>
+        <input type="range" id="contrastSlider" class="edge-slider" min="-100" max="100" step="5" value="0" aria-label="Contrast" />
+        <div class="edge-labels"><span>Contrast</span></div>
+        <input type="range" id="saturationSlider" class="edge-slider" min="-100" max="100" step="5" value="0" aria-label="Saturation" />
+        <div class="edge-labels">
+          <span>Saturation</span>
+          <button id="colorAdjustResetBtn" class="edge-reset">Reset</button>
+        </div>
+      </div>
+      <div class="export-section">
+        <span class="settings-section-title">Flip and rotate</span>
+        <div class="theme-toggle">
+          <button id="flipHBtn" class="theme-option">Flip H</button>
+          <button id="flipVBtn" class="theme-option">Flip V</button>
+          <button id="rotateBtn" class="theme-option">Rotate</button>
+        </div>
+      </div>
+      <div class="export-section">
+        <span class="settings-section-title">Size</span>
+        <select id="sizeSelect" class="model-select size-select" aria-label="Output size"></select>
+        <div id="customSizeRow" class="image-picker hidden">
+          <input id="customW" type="number" class="text-input" min="1" max="10000" aria-label="Width in pixels" />
+          <span class="settings-label">&times;</span>
+          <input id="customH" type="number" class="text-input" min="1" max="10000" aria-label="Height in pixels" />
+        </div>
+        <p class="settings-hint">A preset crops to the subject and centers it on a canvas of that size, over your chosen background.</p>
+      </div>
+      <div class="export-section">
+        <span class="settings-section-title">Auto-crop</span>
+        <div class="theme-toggle" id="autoCropToggle">
+          <button class="theme-option" data-autocrop="off">Off</button>
+          <button class="theme-option" data-autocrop="on">On</button>
+        </div>
+        <p class="settings-hint">Trims the empty space around the subject. Ignored when a size preset is chosen.</p>
       </div>
     </div>
 

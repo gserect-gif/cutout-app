@@ -164,23 +164,77 @@ fn to_input_tensor(img: &RgbImage, profile: &ModelProfile) -> ([usize; 4], Vec<f
     ([1, 3, h, w], data)
 }
 
-/// The square input resolution the given model expects. The caller resizes
-/// the source image to this size before calling `run_inference`.
-pub fn input_size_for(model: ModelId) -> u32 {
-    model.profile().input_size
+/// Everything needed to run one model: where its file is and how images
+/// must be prepared for it. Built for a bundled model or for one the user
+/// imported.
+#[derive(Debug, Clone)]
+pub struct ModelSpec {
+    /// Name used in the performance log.
+    pub label: String,
+    pub path: PathBuf,
+    pub input_size: u32,
+    mean: [f32; 3],
+    std: [f32; 3],
+    minmax: bool,
+}
+
+impl ModelSpec {
+    pub fn bundled(model: ModelId, path: PathBuf) -> Self {
+        let p = model.profile();
+        Self {
+            label: format!("{model:?}"),
+            path,
+            input_size: p.input_size,
+            mean: p.mean,
+            std: p.std,
+            minmax: p.output_needs_minmax_normalize,
+        }
+    }
+
+    /// A model the user imported. `kind` picks the image preparation:
+    /// "u2net" (ImageNet stats, raw output), "isnet" (0.5 mean) or anything
+    /// else for the BiRefNet style (ImageNet stats, probability output).
+    pub fn custom(label: String, path: PathBuf, kind: &str, input_size: u32) -> Self {
+        let imagenet_mean = [0.485, 0.456, 0.406];
+        let imagenet_std = [0.229, 0.224, 0.225];
+        let (mean, std, minmax) = match kind {
+            "u2net" => (imagenet_mean, imagenet_std, true),
+            "isnet" => ([0.5, 0.5, 0.5], [1.0, 1.0, 1.0], false),
+            _ => (imagenet_mean, imagenet_std, false),
+        };
+        Self {
+            label,
+            path,
+            input_size,
+            mean,
+            std,
+            minmax,
+        }
+    }
+}
+
+/// Drops the loaded session for a model file, so the file can be deleted and
+/// its memory is freed.
+pub fn forget_model(model_path: &Path) {
+    if let Some(sessions) = SESSIONS.get() {
+        if let Ok(mut sessions) = sessions.lock() {
+            sessions.remove(model_path);
+        }
+    }
 }
 
 /// Run inference on a pre-resized RGB image and return a row-major
 /// single-channel mask (0.0-1.0) at the model's input resolution. The caller
 /// resizes it back to the source image's dimensions.
-pub fn run_inference(
-    model: ModelId,
-    model_path: &Path,
-    resized_input: &RgbImage,
-) -> Result<Vec<f32>, AppError> {
-    let profile = model.profile();
+pub fn run_inference(spec: &ModelSpec, resized_input: &RgbImage) -> Result<Vec<f32>, AppError> {
+    let profile = ModelProfile {
+        input_size: spec.input_size,
+        mean: spec.mean,
+        std: spec.std,
+        output_needs_minmax_normalize: spec.minmax,
+    };
 
-    with_session(model_path, |session| {
+    with_session(&spec.path, |session| {
         let (shape, data) = to_input_tensor(resized_input, &profile);
         let input_tensor = Tensor::from_array((shape, data))
             .map_err(|e| AppError::InferenceFailed(format!("failed to build input tensor: {e}")))?;

@@ -263,6 +263,645 @@ pub fn refine_edges(img: &mut RgbaImage, edge: i32) {
     }
 }
 
+/// Fits the visible part of the cutout onto a transparent canvas of exactly
+/// `cw` x `ch` pixels. The cutout is first trimmed to the bounding box of what
+/// is actually visible, then scaled to fit with a small margin, and centred.
+fn fit_to_canvas(src: &RgbaImage, cw: u32, ch: u32) -> RgbaImage {
+    let (w, h) = src.dimensions();
+    let mut canvas = RgbaImage::new(cw, ch);
+
+    // Bounding box of the pixels that are clearly visible.
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (w, h, 0u32, 0u32);
+    for (x, y, px) in src.enumerate_pixels() {
+        if px[3] > 8 {
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+    }
+    if min_x > max_x || min_y > max_y {
+        return canvas; // nothing visible to place
+    }
+
+    let bw = max_x - min_x + 1;
+    let bh = max_y - min_y + 1;
+    let cropped = image::imageops::crop_imm(src, min_x, min_y, bw, bh).to_image();
+
+    const MARGIN: f32 = 0.06;
+    let avail_w = cw as f32 * (1.0 - 2.0 * MARGIN);
+    let avail_h = ch as f32 * (1.0 - 2.0 * MARGIN);
+    let scale = (avail_w / bw as f32).min(avail_h / bh as f32);
+    let nw = ((bw as f32 * scale).round() as u32).clamp(1, cw);
+    let nh = ((bh as f32 * scale).round() as u32).clamp(1, ch);
+
+    let resized =
+        image::imageops::resize(&cropped, nw, nh, image::imageops::FilterType::CatmullRom);
+    let x = (cw - nw) / 2;
+    let y = (ch - nh) / 2;
+    image::imageops::overlay(&mut canvas, &resized, x as i64, y as i64);
+    canvas
+}
+
+/// Adds a soft drop shadow underneath the cutout, using the cutout's own
+/// alpha as the shape. `strength` (1-100) controls how big, soft and dark it
+/// is. The shadow is black, so only the cutout's own colors show through.
+fn add_shadow(img: &mut RgbaImage, strength: u8) {
+    let (w, h) = img.dimensions();
+    let (wu, hu) = (w as usize, h as usize);
+    let s = strength.min(100) as f32 / 100.0;
+    let longest = w.max(h) as f32;
+
+    let blur = ((0.006 + 0.03 * s) * longest).round().max(1.0) as usize;
+    let offset = (blur as f32 * 0.6).round() as usize;
+    let opacity = 0.25 + 0.35 * s;
+
+    // The shadow's shape: the cutout's alpha channel moved down a little.
+    let mut shadow = vec![0u8; wu * hu];
+    {
+        let raw = img.as_raw();
+        for y in offset..hu {
+            let src_row = (y - offset) * wu;
+            let dst_row = y * wu;
+            for x in 0..wu {
+                shadow[dst_row + x] = raw[(src_row + x) * 4 + 3];
+            }
+        }
+    }
+    // Two box blurs in a row approximate a smooth gaussian falloff.
+    box_blur(&mut shadow, wu, hu, blur);
+    box_blur(&mut shadow, wu, hu, blur);
+
+    for (i, px) in img.pixels_mut().enumerate() {
+        let sa = shadow[i] as f32 / 255.0 * opacity;
+        if sa <= 0.0 {
+            continue;
+        }
+        let a = px[3] as f32 / 255.0;
+        let out_a = a + sa * (1.0 - a);
+        if out_a <= 0.0 {
+            continue;
+        }
+        let k = a / out_a;
+        px[0] = (px[0] as f32 * k).round() as u8;
+        px[1] = (px[1] as f32 * k).round() as u8;
+        px[2] = (px[2] as f32 * k).round() as u8;
+        px[3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+}
+
+/// Every look-changing setting applied to the cutout itself (as opposed to
+/// what goes behind it). The frontend sends them as one object, so a new
+/// setting only needs adding here, in `shape_cutout`, and in the UI.
+#[derive(serde::Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Effects {
+    /// Edge hardness, -100 (sharper) to 100 (softer). 0 = unchanged.
+    pub edge: i32,
+    /// -100 (shrink the cutout) to 100 (grow it). 0 = unchanged.
+    pub grow: i32,
+    /// Color defringe strength, 0 (off) to 100.
+    pub defringe: u8,
+    /// Fit the cutout onto a canvas of exactly this size. Missing or zero
+    /// means keep the original image size.
+    pub canvas_width: Option<u32>,
+    pub canvas_height: Option<u32>,
+    /// Drop shadow strength, 0 (off) to 100.
+    pub shadow: u8,
+    /// Trim the empty space around the subject (ignored when a canvas size is set).
+    pub auto_crop: bool,
+    /// Brightness, contrast and saturation, each -100 to 100. 0 = unchanged.
+    pub brightness: i32,
+    pub contrast: i32,
+    pub saturation: i32,
+    /// Mirror the cutout, and turn it by `rotate` quarter turns (0-3, clockwise).
+    pub flip_h: bool,
+    pub flip_v: bool,
+    pub rotate: u8,
+    /// Sticker outline width, 0 (off) to 100, and its color as "#rrggbb".
+    pub outline: u8,
+    pub outline_color: String,
+    /// Gradient to put behind the cutout. None = no gradient.
+    pub gradient: Option<Gradient>,
+    /// Blurred copy of the original photo behind the cutout: strength 0 (off) to 100.
+    pub blur_bg: u8,
+}
+
+impl Effects {
+    pub fn canvas(&self) -> Option<(u32, u32)> {
+        match (self.canvas_width, self.canvas_height) {
+            (Some(w), Some(h)) if w > 0 && h > 0 => Some((w, h)),
+            _ => None,
+        }
+    }
+
+    /// True when nothing here changes the cutout.
+    pub fn is_default(&self) -> bool {
+        self.edge == 0
+            && self.grow == 0
+            && self.defringe == 0
+            && self.canvas().is_none()
+            && self.shadow == 0
+            && !self.auto_crop
+            && self.brightness == 0
+            && self.contrast == 0
+            && self.saturation == 0
+            && !self.flip_h
+            && !self.flip_v
+            && self.rotate % 4 == 0
+            && self.outline == 0
+            && self.gradient.is_none()
+            && self.blur_bg == 0
+    }
+}
+
+/// Moves the cutout's edge inward (shrink, negative) or outward (grow,
+/// positive) by reshaping the alpha channel only. The distance scales with
+/// the image size, like the Edges slider. Done with one box blur and a
+/// threshold, which is fast even on large photos.
+pub fn adjust_edge_position(img: &mut RgbaImage, amount: i32) {
+    let amount = amount.clamp(-100, 100);
+    if amount == 0 {
+        return;
+    }
+
+    let (w, h) = img.dimensions();
+    let (wu, hu) = (w as usize, h as usize);
+    let longest = w.max(h) as f32;
+    let dist = ((amount.abs() as f32 / 100.0) * longest * 0.004).round().max(1.0);
+    let radius = (dist * 2.0) as usize;
+    let window = (2 * radius + 1) as f32;
+
+    let mut alpha: Vec<u8> = img.pixels().map(|p| p[3]).collect();
+    box_blur(&mut alpha, wu, hu, radius);
+
+    // Across a straight edge the blurred alpha is 0.5 on the old edge and
+    // changes by 1/window per pixel. So the new edge sits where it crosses
+    // 0.5 -/+ dist/window, and a 1-pixel margin each side keeps it smooth.
+    let shift = dist / window;
+    let threshold = if amount > 0 { 0.5 - shift } else { 0.5 + shift };
+    let half = 1.0 / window;
+    let (lo, hi) = (threshold - half, threshold + half);
+
+    let mut lut = [0u8; 256];
+    for (i, slot) in lut.iter_mut().enumerate() {
+        let x = ((i as f32 / 255.0 - lo) / (hi - lo)).clamp(0.0, 1.0);
+        *slot = (x * x * (3.0 - 2.0 * x) * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+
+    for (px, b) in img.pixels_mut().zip(alpha) {
+        let new_a = lut[b as usize];
+        // Growing never makes anything more transparent, shrinking never less.
+        px[3] = if amount > 0 { px[3].max(new_a) } else { px[3].min(new_a) };
+    }
+}
+
+/// Removes color halos along the cutout edge. Pixels that are only partly
+/// visible often still carry the old background's color; this replaces their
+/// color with the color of the solid subject pixels next to them. Only colors
+/// change, never transparency. `strength` (0-100) is how far to move toward
+/// the corrected color.
+pub fn defringe(img: &mut RgbaImage, strength: u8) {
+    if strength == 0 {
+        return;
+    }
+    const SOLID: u8 = 245;
+
+    let (w, h) = img.dimensions();
+    let (wu, hu) = (w as usize, h as usize);
+    let t = strength.min(100) as f32 / 100.0;
+
+    // Pixels that are (nearly) fully visible are the trusted colors. The
+    // partly visible ones in between are what gets corrected.
+    let mut known: Vec<bool> = img.pixels().map(|p| p[3] >= SOLID).collect();
+    let targets: Vec<usize> = img
+        .pixels()
+        .enumerate()
+        .filter(|(_, p)| p[3] > 0 && p[3] < SOLID)
+        .map(|(i, _)| i)
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+
+    let data: &mut [u8] = &mut **img;
+    let original: Vec<[u8; 3]> = targets
+        .iter()
+        .map(|&i| [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]])
+        .collect();
+    let mut reached = vec![false; targets.len()];
+    let mut remaining: Vec<usize> = (0..targets.len()).collect();
+
+    // Colors spread outward from the solid area one pixel ring at a time,
+    // through the partly visible band only. Only that band is visited, so
+    // this stays fast on large images.
+    let longest = w.max(h) as f32;
+    let max_passes = ((0.012 * longest).round() as usize).clamp(3, 60);
+
+    for _ in 0..max_passes {
+        let mut newly: Vec<(usize, [u8; 3])> = Vec::new();
+        let mut still: Vec<usize> = Vec::new();
+
+        for &ti in &remaining {
+            let idx = targets[ti];
+            let (x, y) = ((idx % wu) as i32, (idx / wu) as i32);
+            let (mut r, mut g, mut b, mut n) = (0u32, 0u32, 0u32, 0u32);
+            for dy in -1i32..=1 {
+                for dx in -1i32..=1 {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx < 0 || ny < 0 || nx >= wu as i32 || ny >= hu as i32 {
+                        continue;
+                    }
+                    let ni = ny as usize * wu + nx as usize;
+                    if known[ni] {
+                        r += data[ni * 4] as u32;
+                        g += data[ni * 4 + 1] as u32;
+                        b += data[ni * 4 + 2] as u32;
+                        n += 1;
+                    }
+                }
+            }
+            if n > 0 {
+                newly.push((ti, [(r / n) as u8, (g / n) as u8, (b / n) as u8]));
+            } else {
+                still.push(ti);
+            }
+        }
+
+        if newly.is_empty() {
+            break;
+        }
+        // Applied after the whole ring is measured, so each ring only
+        // learns from the one before it.
+        for (ti, c) in newly {
+            let idx = targets[ti];
+            data[idx * 4] = c[0];
+            data[idx * 4 + 1] = c[1];
+            data[idx * 4 + 2] = c[2];
+            known[idx] = true;
+            reached[ti] = true;
+        }
+        remaining = still;
+        if remaining.is_empty() {
+            break;
+        }
+    }
+
+    // Blend between the old and the corrected color by the chosen strength.
+    for (ti, &idx) in targets.iter().enumerate() {
+        if !reached[ti] {
+            continue;
+        }
+        for c in 0..3 {
+            let corrected = data[idx * 4 + c] as f32;
+            let old = original[ti][c] as f32;
+            data[idx * 4 + c] = (old * (1.0 - t) + corrected * t).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
+/// Trims the image to the box around everything that is visible.
+fn crop_to_subject(src: RgbaImage) -> RgbaImage {
+    let (w, h) = src.dimensions();
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (w, h, 0u32, 0u32);
+    for (x, y, px) in src.enumerate_pixels() {
+        if px[3] > 8 {
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+    }
+    if min_x > max_x || min_y > max_y {
+        return src; // nothing visible, leave it alone
+    }
+    image::imageops::crop_imm(&src, min_x, min_y, max_x - min_x + 1, max_y - min_y + 1).to_image()
+}
+
+/// A two-color gradient used as the background. `angle` follows CSS:
+/// 0 points up, 90 points right.
+#[derive(serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Gradient {
+    pub from: String,
+    pub to: String,
+    pub angle: f32,
+}
+
+/// Mirrors and turns the cutout.
+fn orient_rgba(mut img: RgbaImage, fx: &Effects) -> RgbaImage {
+    if fx.flip_h {
+        img = image::imageops::flip_horizontal(&img);
+    }
+    if fx.flip_v {
+        img = image::imageops::flip_vertical(&img);
+    }
+    match fx.rotate % 4 {
+        1 => image::imageops::rotate90(&img),
+        2 => image::imageops::rotate180(&img),
+        3 => image::imageops::rotate270(&img),
+        _ => img,
+    }
+}
+
+/// Same as `orient_rgba`, for the photo used as a blurred background.
+fn orient_dynamic(mut img: DynamicImage, fx: &Effects) -> DynamicImage {
+    if fx.flip_h {
+        img = img.fliph();
+    }
+    if fx.flip_v {
+        img = img.flipv();
+    }
+    match fx.rotate % 4 {
+        1 => img.rotate90(),
+        2 => img.rotate180(),
+        3 => img.rotate270(),
+        _ => img,
+    }
+}
+
+/// Brightness, contrast and saturation of the subject's colors, each -100 to
+/// 100. Transparency is untouched.
+pub fn adjust_colors(img: &mut RgbaImage, brightness: i32, contrast: i32, saturation: i32) {
+    if brightness == 0 && contrast == 0 && saturation == 0 {
+        return;
+    }
+    let offset = brightness.clamp(-100, 100) as f32 * 2.55;
+    let factor = 1.0 + contrast.clamp(-100, 100) as f32 / 100.0;
+    let sat = 1.0 + saturation.clamp(-100, 100) as f32 / 100.0;
+
+    let mut lut = [0u8; 256];
+    for (i, slot) in lut.iter_mut().enumerate() {
+        *slot = ((i as f32 - 128.0) * factor + 128.0 + offset)
+            .round()
+            .clamp(0.0, 255.0) as u8;
+    }
+
+    for px in img.pixels_mut() {
+        if px[3] == 0 {
+            continue;
+        }
+        let (r, g, b) = (px[0] as f32, px[1] as f32, px[2] as f32);
+        let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+        let mix = |v: f32| (gray + (v - gray) * sat).round().clamp(0.0, 255.0) as usize;
+        px[0] = lut[mix(r)];
+        px[1] = lut[mix(g)];
+        px[2] = lut[mix(b)];
+    }
+}
+
+/// Grows an alpha channel outward by about `dist` pixels with a round shape.
+/// Two box blurs approximate a gaussian, and the new edge is where that
+/// blurred edge crosses the level a gaussian of this size has `dist` pixels
+/// outside a straight edge.
+fn dilate_alpha(alpha: &mut [u8], w: usize, h: usize, dist: f32) {
+    let sigma = dist.max(1.0);
+    let radius = (((sigma * 2.45 - 1.0) / 2.0).round().max(1.0)) as usize;
+    box_blur(alpha, w, h, radius);
+    box_blur(alpha, w, h, radius);
+
+    let threshold = 0.1587f32;
+    let half = (0.242 / sigma).clamp(0.02, 0.2);
+    let (lo, hi) = (threshold - half, threshold + half);
+
+    let mut lut = [0u8; 256];
+    for (i, slot) in lut.iter_mut().enumerate() {
+        let x = ((i as f32 / 255.0 - lo) / (hi - lo)).clamp(0.0, 1.0);
+        *slot = (x * x * (3.0 - 2.0 * x) * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+    for a in alpha.iter_mut() {
+        *a = lut[*a as usize];
+    }
+}
+
+/// Adds a solid-color sticker outline around the cutout, behind it.
+/// `strength` (1-100) is the outline width, relative to the image size.
+fn add_outline(img: &mut RgbaImage, strength: u8, color: [u8; 3]) {
+    if strength == 0 {
+        return;
+    }
+    let (w, h) = img.dimensions();
+    let longest = w.max(h) as f32;
+    let dist = ((strength.min(100) as f32 / 100.0) * longest * 0.02)
+        .round()
+        .max(1.0);
+
+    let mut grown: Vec<u8> = img.pixels().map(|p| p[3]).collect();
+    dilate_alpha(&mut grown, w as usize, h as usize, dist);
+
+    for (px, d) in img.pixels_mut().zip(grown) {
+        let a = px[3] as f32 / 255.0;
+        let d = (d as f32 / 255.0).max(a);
+        // The subject sits on top of the outline layer.
+        let out_a = a + d * (1.0 - a);
+        if out_a <= 0.0 {
+            continue;
+        }
+        for c in 0..3 {
+            let subject = px[c] as f32;
+            let base = color[c] as f32;
+            px[c] = ((subject * a + base * d * (1.0 - a)) / out_a)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+        }
+        px[3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+}
+
+/// Draws a two-color gradient of the given size, matching CSS `linear-gradient`.
+fn make_gradient(w: u32, h: u32, g: &Gradient) -> RgbImage {
+    let a = parse_hex_color(&g.from).unwrap_or([255, 255, 255]);
+    let b = parse_hex_color(&g.to).unwrap_or([0, 0, 0]);
+    let rad = g.angle.to_radians();
+    let (dx, dy) = (rad.sin(), -rad.cos());
+    let len = (w as f32 * dx.abs() + h as f32 * dy.abs()).max(1.0);
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+
+    let mut out = RgbImage::new(w, h);
+    for (x, y, px) in out.enumerate_pixels_mut() {
+        let t = (((x as f32 + 0.5 - cx) * dx + (y as f32 + 0.5 - cy) * dy) / len + 0.5)
+            .clamp(0.0, 1.0);
+        let mix = |i: usize| (a[i] as f32 + (b[i] as f32 - a[i] as f32) * t).round() as u8;
+        *px = image::Rgb([mix(0), mix(1), mix(2)]);
+    }
+    out
+}
+
+/// A blurred copy of the original photo, `w` x `h` pixels, to use as the
+/// background. It is turned the same way as the cutout. When the cutout keeps
+/// the photo's own size it lines up with the subject exactly; with a size
+/// preset or auto-crop it simply fills the new frame.
+fn make_blur_backdrop(orig: &DynamicImage, fx: &Effects, w: u32, h: u32) -> RgbImage {
+    use image::imageops::FilterType;
+
+    // Work on a small copy: a blur hides detail anyway, and it is far faster.
+    let small = if orig.width().max(orig.height()) > 1600 {
+        orig.thumbnail(1600, 1600)
+    } else {
+        orig.clone()
+    };
+    let small = orient_dynamic(small, fx);
+
+    let k = (1200.0 / w.max(h) as f32).min(1.0);
+    let ww = ((w as f32 * k).round() as u32).max(1);
+    let wh = ((h as f32 * k).round() as u32).max(1);
+    let work = small.resize_to_fill(ww, wh, FilterType::Triangle).to_rgb8();
+    let (wu, hu) = (ww as usize, wh as usize);
+
+    let strength = fx.blur_bg.min(100) as f32 / 100.0;
+    let radius = (strength * ww.max(wh) as f32 * 0.03).round().max(1.0) as usize;
+
+    let mut planes = [vec![0u8; wu * hu], vec![0u8; wu * hu], vec![0u8; wu * hu]];
+    for (i, p) in work.pixels().enumerate() {
+        for c in 0..3 {
+            planes[c][i] = p[c];
+        }
+    }
+    for plane in planes.iter_mut() {
+        box_blur(plane, wu, hu, radius);
+        box_blur(plane, wu, hu, radius);
+    }
+
+    let mut blurred = RgbImage::new(ww, wh);
+    for (i, p) in blurred.pixels_mut().enumerate() {
+        *p = image::Rgb([planes[0][i], planes[1][i], planes[2][i]]);
+    }
+
+    if (ww, wh) == (w, h) {
+        blurred
+    } else {
+        image::imageops::resize(&blurred, w, h, FilterType::Triangle)
+    }
+}
+
+/// Composites an RGBA cutout over a backdrop of the same size.
+fn composite_over(rgba: &RgbaImage, backdrop: &RgbImage) -> RgbImage {
+    let (w, h) = rgba.dimensions();
+    let mut out = RgbImage::new(w, h);
+    for (x, y, px) in rgba.enumerate_pixels() {
+        let a = px[3] as u32;
+        let inv = 255 - a;
+        let b = backdrop.get_pixel(x, y);
+        let blend = |f: u8, b: u8| ((f as u32 * a + b as u32 * inv + 127) / 255) as u8;
+        out.put_pixel(
+            x,
+            y,
+            image::Rgb([blend(px[0], b[0]), blend(px[1], b[1]), blend(px[2], b[2])]),
+        );
+    }
+    out
+}
+
+/// The cutout over a blurred copy of the original photo (opaque result).
+pub fn flatten_over_blur(rgba: &RgbaImage, original: &DynamicImage, fx: &Effects) -> RgbImage {
+    let (w, h) = rgba.dimensions();
+    composite_over(rgba, &make_blur_backdrop(original, fx, w, h))
+}
+
+/// Applies every look-changing setting to a cutout, in the one order used by
+/// previews, exports and copy-to-clipboard so they always agree: flip and
+/// rotate, edge position (shrink/grow), edge softness, color defringe, color
+/// adjust, fitting onto a canvas size, the sticker outline, the drop shadow,
+/// and last the auto-crop.
+pub fn shape_cutout(rgba: RgbaImage, fx: &Effects) -> RgbaImage {
+    let mut rgba = orient_rgba(rgba, fx);
+    adjust_edge_position(&mut rgba, fx.grow);
+    refine_edges(&mut rgba, fx.edge);
+    defringe(&mut rgba, fx.defringe);
+    adjust_colors(&mut rgba, fx.brightness, fx.contrast, fx.saturation);
+    let canvas = fx.canvas();
+    if let Some((cw, ch)) = canvas {
+        rgba = fit_to_canvas(&rgba, cw, ch);
+    }
+    if fx.outline > 0 {
+        let color = parse_hex_color(&fx.outline_color).unwrap_or([255, 255, 255]);
+        add_outline(&mut rgba, fx.outline, color);
+    }
+    if fx.shadow > 0 {
+        add_shadow(&mut rgba, fx.shadow);
+    }
+    // Cropping comes last so the shadow is kept inside the cropped image.
+    if canvas.is_none() && fx.auto_crop {
+        rgba = crop_to_subject(rgba);
+    }
+    rgba
+}
+
+// ---------- Touch-up brush ----------
+
+/// One brush stroke painted in the touch-up editor, in image pixel coordinates.
+#[derive(serde::Deserialize)]
+pub struct BrushStroke {
+    /// true = erase (make transparent), false = restore (make visible again).
+    pub erase: bool,
+    /// Brush radius in image pixels.
+    pub radius: f32,
+    pub points: Vec<[f32; 2]>,
+}
+
+/// Paints one round, soft-edged dab of the brush onto the alpha channel.
+fn stamp_brush(img: &mut RgbaImage, cx: f32, cy: f32, r: f32, erase: bool) {
+    let (w, h) = img.dimensions();
+    let x0 = ((cx - r).floor() as i32).max(0);
+    let x1 = ((cx + r).ceil() as i32).min(w as i32 - 1);
+    let y0 = ((cy - r).floor() as i32).max(0);
+    let y1 = ((cy + r).ceil() as i32).min(h as i32 - 1);
+    if x0 > x1 || y0 > y1 {
+        return;
+    }
+
+    let inner = r * 0.8;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let dx = x as f32 + 0.5 - cx;
+            let dy = y as f32 + 0.5 - cy;
+            let d = (dx * dx + dy * dy).sqrt();
+            if d >= r {
+                continue;
+            }
+            let coverage = if d <= inner { 1.0 } else { (r - d) / (r - inner) };
+            let px = img.get_pixel_mut(x as u32, y as u32);
+            let a = px[3] as f32;
+            let new_a = if erase {
+                a * (1.0 - coverage)
+            } else {
+                a + (255.0 - a) * coverage
+            };
+            px[3] = new_a.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
+/// Paints brush strokes onto the cutout's alpha channel. The colors are left
+/// alone on purpose: the result file keeps the original photo's colors even
+/// where it is transparent, so "restore" only has to bring the alpha back.
+pub fn apply_brush_strokes(img: &mut RgbaImage, strokes: &[BrushStroke]) {
+    for stroke in strokes {
+        let r = stroke.radius.max(1.0);
+        let step = (r * 0.3).max(1.0);
+
+        match stroke.points.len() {
+            0 => {}
+            1 => stamp_brush(img, stroke.points[0][0], stroke.points[0][1], r, stroke.erase),
+            _ => {
+                for pair in stroke.points.windows(2) {
+                    let (ax, ay) = (pair[0][0], pair[0][1]);
+                    let (bx, by) = (pair[1][0], pair[1][1]);
+                    let dist = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
+                    let n = (dist / step).ceil().max(1.0) as u32;
+                    for i in 0..=n {
+                        let t = i as f32 / n as f32;
+                        stamp_brush(img, ax + (bx - ax) * t, ay + (by - ay) * t, r, stroke.erase);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Everything that shapes an exported file besides the cutout itself.
 pub struct ExportRender<'a> {
     pub format: ExportFormat,
@@ -270,8 +909,10 @@ pub struct ExportRender<'a> {
     pub color: Option<[u8; 3]>,
     /// Picture behind the cutout, already decoded.
     pub image: Option<&'a DynamicImage>,
-    /// Edge hardness, -100 (sharper) to 100 (softer). 0 = unchanged.
-    pub edge: i32,
+    /// The look-changing settings applied to the cutout itself.
+    pub fx: Effects,
+    /// The original photo, when a blurred copy of it is the background.
+    pub blur_source: Option<&'a DynamicImage>,
 }
 
 /// Writes the cutout PNG at `result_path` to `dest`, applying the edge
@@ -291,21 +932,36 @@ pub fn export_cutout(
     if format == ExportFormat::Png
         && render.color.is_none()
         && render.image.is_none()
-        && render.edge == 0
+        && render.fx.is_default()
     {
         std::fs::copy(result_path, dest).map_err(|e| AppError::Io(e.to_string()))?;
         return Ok(());
     }
 
-    let mut rgba = image::open(result_path)
+    let buf = encode_cutout(result_path, render)?;
+    std::fs::write(dest, &buf).map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(())
+}
+
+/// Renders the cutout with all the chosen settings and returns the encoded
+/// file bytes (nothing is written to disk). Used for exports and for
+/// copying to the clipboard.
+pub fn encode_cutout(result_path: &str, render: &ExportRender) -> Result<Vec<u8>, AppError> {
+    let format = render.format;
+
+    let source = image::open(result_path)
         .map_err(|e| AppError::DecodeFailed(format!("result image: {e}")))?
         .to_rgba8();
-    refine_edges(&mut rgba, render.edge);
+    let rgba = shape_cutout(source, &render.fx);
     let (w, h) = rgba.dimensions();
 
     // JPEG can't hold transparency, so with nothing chosen it gets white.
     let flat: Option<RgbImage> = if let Some(bg) = render.image {
         Some(flatten_over_image(&rgba, bg))
+    } else if let Some(g) = &render.fx.gradient {
+        Some(composite_over(&rgba, &make_gradient(w, h, g)))
+    } else if let (true, Some(src)) = (render.fx.blur_bg > 0, render.blur_source) {
+        Some(flatten_over_blur(&rgba, src, &render.fx))
     } else if let Some(c) = render.color {
         Some(flatten_over(&rgba, c))
     } else if format == ExportFormat::Jpg {
@@ -342,9 +998,7 @@ pub fn export_cutout(
         },
     };
     encoded.map_err(|e| AppError::EncodeFailed(e.to_string()))?;
-
-    std::fs::write(dest, &buf).map_err(|e| AppError::Io(e.to_string()))?;
-    Ok(())
+    Ok(buf)
 }
 
 /// Apply a per-pixel alpha mask (0.0-1.0, row-major, same dimensions as

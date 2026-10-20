@@ -208,11 +208,14 @@ struct ModelAvailability {
     /// One-line description shown as the dropdown option's tooltip, so
     /// picking a model doesn't require memorizing what "Balanced" means.
     description: String,
+    /// Display name for models the user imported (bundled ones have fixed
+    /// names in the frontend).
+    name: Option<String>,
 }
 
 #[tauri::command]
 fn list_available_models(app: tauri::AppHandle) -> Vec<ModelAvailability> {
-    [
+    let mut list: Vec<ModelAvailability> = [
         (
             "fast",
             inference::ModelId::U2NetP,
@@ -243,9 +246,176 @@ fn list_available_models(app: tauri::AppHandle) -> Vec<ModelAvailability> {
             available: path.exists(),
             size_mb,
             description: description.to_string(),
+            name: None,
         }
     })
-    .collect()
+    .collect();
+
+    // Models the user imported follow the bundled ones.
+    if let (Ok(custom), Ok(dir)) = (read_custom_models(&app), custom_models_dir(&app)) {
+        for m in custom {
+            let path = dir.join(&m.file);
+            let size_mb = std::fs::metadata(&path).ok().map(|md| md.len() / (1024 * 1024));
+            list.push(ModelAvailability {
+                key: format!("custom:{}", m.id),
+                available: path.exists(),
+                size_mb,
+                description: m.description.clone(),
+                name: Some(m.name.clone()),
+            });
+        }
+    }
+    list
+}
+
+/// A background-removal model the user imported. The file itself lives in the
+/// app's data folder; this is its entry in `models.json` next to it.
+#[derive(Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CustomModel {
+    id: String,
+    name: String,
+    description: String,
+    file: String,
+    /// "standard" (BiRefNet style), "isnet" or "u2net": how images are
+    /// prepared for the model.
+    kind: String,
+    input_size: u32,
+}
+
+fn custom_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(format!("couldn't resolve app data directory: {e}")))?
+        .join("custom-models");
+    std::fs::create_dir_all(&dir).map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(dir)
+}
+
+fn read_custom_models(app: &tauri::AppHandle) -> Result<Vec<CustomModel>, AppError> {
+    let file = custom_models_dir(app)?.join("models.json");
+    if !file.exists() {
+        return Ok(Vec::new());
+    }
+    let text = std::fs::read_to_string(&file).map_err(|e| AppError::Io(e.to_string()))?;
+    serde_json::from_str(&text)
+        .map_err(|e| AppError::Io(format!("the custom model list is damaged: {e}")))
+}
+
+fn write_custom_models(app: &tauri::AppHandle, list: &[CustomModel]) -> Result<(), AppError> {
+    let file = custom_models_dir(app)?.join("models.json");
+    let text = serde_json::to_string_pretty(list).map_err(|e| AppError::Io(e.to_string()))?;
+    std::fs::write(&file, text).map_err(|e| AppError::Io(e.to_string()))
+}
+
+/// Works out which model to run: one of the bundled ones, or an imported one
+/// (its key starts with "custom:"). Unknown or missing keys use the default.
+fn resolve_model_spec(
+    app: &tauri::AppHandle,
+    key: Option<&str>,
+) -> Result<inference::ModelSpec, AppError> {
+    if let Some(id) = key.and_then(|k| k.strip_prefix("custom:")) {
+        let entry = read_custom_models(app)?
+            .into_iter()
+            .find(|m| m.id == id)
+            .ok_or_else(|| AppError::ModelMissing(format!("custom model {id}")))?;
+        let path = custom_models_dir(app)?.join(&entry.file);
+        return Ok(inference::ModelSpec::custom(
+            entry.name,
+            path,
+            &entry.kind,
+            entry.input_size,
+        ));
+    }
+
+    let id = key
+        .and_then(inference::ModelId::from_key)
+        .unwrap_or(inference::ModelId::BiRefNetLite);
+    Ok(inference::ModelSpec::bundled(id, resolve_model_path(app, id)))
+}
+
+#[tauri::command]
+fn list_custom_models(app: tauri::AppHandle) -> Result<Vec<CustomModel>, AppError> {
+    read_custom_models(&app)
+}
+
+/// Copies a model file into the app's data folder and adds it to the list of
+/// custom models, with the name and description the user gave it.
+#[tauri::command]
+async fn import_custom_model(
+    app: tauri::AppHandle,
+    source_path: String,
+    name: String,
+    description: String,
+    kind: String,
+    input_size: u32,
+) -> Result<CustomModel, AppError> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::Io("Please give the model a name.".into()));
+    }
+    if !matches!(kind.as_str(), "standard" | "isnet" | "u2net") {
+        return Err(AppError::Io("Unknown model type.".into()));
+    }
+    if !(64..=4096).contains(&input_size) {
+        return Err(AppError::Io("The input size must be between 64 and 4096.".into()));
+    }
+    let source = PathBuf::from(&source_path);
+    let is_onnx = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("onnx"))
+        .unwrap_or(false);
+    if !is_onnx {
+        return Err(AppError::Io("Choose a .onnx model file.".into()));
+    }
+    if !source.is_file() {
+        return Err(AppError::Io(format!("File not found: {source_path}")));
+    }
+
+    // Models can be hundreds of MB, so the copy runs off the UI thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = custom_models_dir(&app)?;
+        let mut list = read_custom_models(&app)?;
+
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let id = format!("{millis}");
+        let file = format!("custom-{id}.onnx");
+
+        std::fs::copy(&source, dir.join(&file))
+            .map_err(|e| AppError::Io(format!("couldn't copy the model file: {e}")))?;
+
+        let entry = CustomModel {
+            id,
+            name,
+            description: description.trim().to_string(),
+            file,
+            kind,
+            input_size,
+        };
+        list.push(entry.clone());
+        write_custom_models(&app, &list)?;
+        Ok(entry)
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("model import task panicked: {e}")))?
+}
+
+#[tauri::command]
+fn delete_custom_model(app: tauri::AppHandle, id: String) -> Result<(), AppError> {
+    let mut list = read_custom_models(&app)?;
+    if let Some(pos) = list.iter().position(|m| m.id == id) {
+        let removed = list.remove(pos);
+        let path = custom_models_dir(&app)?.join(&removed.file);
+        inference::forget_model(&path);
+        let _ = std::fs::remove_file(&path);
+        write_custom_models(&app, &list)?;
+    }
+    Ok(())
 }
 
 /// Core single-image pipeline: decode (or reuse an already-decoded) source
@@ -263,7 +433,7 @@ fn list_available_models(app: tauri::AppHandle) -> Vec<ModelAvailability> {
 fn run_removal_pipeline(
     app: &tauri::AppHandle,
     path: &str,
-    model: inference::ModelId,
+    spec: &inference::ModelSpec,
     cached: Option<Arc<DynamicImage>>,
 ) -> Result<(String, u32, u32, u64), AppError> {
     if is_cancelled() {
@@ -285,15 +455,14 @@ fn run_removal_pipeline(
     eprintln!("[perf] get source image (cache hit or decode): {:?}", t0.elapsed());
     memstat::log_memory("run_removal_pipeline: after get source image");
 
-    let model_path = resolve_model_path(app, model);
-    let input_size = inference::input_size_for(model);
+    let input_size = spec.input_size;
 
     let t1 = Instant::now();
     let model_input = image_ops::prepare_model_input(&image, input_size);
     eprintln!("[perf] resize to model input: {:?}", t1.elapsed());
 
     let t2 = Instant::now();
-    let raw_mask = inference::run_inference(model, &model_path, &model_input)?;
+    let raw_mask = inference::run_inference(spec, &model_input)?;
     eprintln!(
         "[perf] ONNX inference (incl. first-call model load if not yet cached): {:?}",
         t2.elapsed()
@@ -335,8 +504,8 @@ fn run_removal_pipeline(
 
     eprintln!("[perf] TOTAL: {:?}", start.elapsed());
     memstat::log_line(&format!(
-        "[perf] SUMMARY model={:?} image={}x{} total={:?}",
-        model,
+        "[perf] SUMMARY model={} image={}x{} total={:?}",
+        spec.label,
         width,
         height,
         start.elapsed()
@@ -388,10 +557,7 @@ async fn remove_background(
     model: Option<String>,
     cache: tauri::State<'_, ImageCache>,
 ) -> Result<RemoveBackgroundResult, AppError> {
-    let model_id = model
-        .as_deref()
-        .and_then(inference::ModelId::from_key)
-        .unwrap_or(inference::ModelId::BiRefNetLite);
+    let spec = resolve_model_spec(&app, model.as_deref())?;
 
     clear_cancel_flag();
 
@@ -413,7 +579,7 @@ async fn remove_background(
     // the async IPC runtime (and therefore the UI) stays responsive.
     tauri::async_runtime::spawn_blocking(move || {
         let (result_path, width, height, elapsed_ms) =
-            run_removal_pipeline(&app, &path, model_id, cached)?;
+            run_removal_pipeline(&app, &path, &spec, cached)?;
 
         // Now that the new result is safely on disk, remove the previous
         // one (if any) so single-image-mode results don't accumulate
@@ -616,10 +782,7 @@ async fn remove_background_batch(
     paths: Vec<String>,
     model: Option<String>,
 ) -> Result<Vec<BatchItemResult>, AppError> {
-    let model_id = model
-        .as_deref()
-        .and_then(inference::ModelId::from_key)
-        .unwrap_or(inference::ModelId::BiRefNetLite);
+    let spec = resolve_model_spec(&app, model.as_deref())?;
 
     clear_cancel_flag();
 
@@ -631,7 +794,7 @@ async fn remove_background_batch(
             // batch items were never individually previewed/decoded first
             // via `load_image`, so there is nothing to reuse. Each image is
             // decoded fresh from disk as part of `run_removal_pipeline`.
-            let item = match run_removal_pipeline(&app, &path, model_id, None) {
+            let item = match run_removal_pipeline(&app, &path, &spec, None) {
                 Ok((result_path, width, height, elapsed_ms)) => BatchItemResult::Success {
                     source_path: path.clone(),
                     result_path,
@@ -691,7 +854,7 @@ async fn export_png(
     format: Option<String>,
     background: Option<String>,
     background_image: Option<String>,
-    edge: Option<i32>,
+    effects: Option<image_ops::Effects>,
 ) -> Result<ExportInfo, AppError> {
     if !std::path::Path::new(&result_path).exists() {
         return Err(AppError::Io(
@@ -702,21 +865,24 @@ async fn export_png(
 
     let format = image_ops::ExportFormat::from_key(format.as_deref());
     let color = background.as_deref().and_then(image_ops::parse_hex_color);
-    let edge = edge.unwrap_or(0);
+    let fx = effects.unwrap_or_default();
 
     // Encoding a full-resolution JPG/WebP can take a moment, so it runs on a
     // blocking thread to keep the UI responsive.
     tauri::async_runtime::spawn_blocking(move || {
         let original_size_bytes = original_path
+            .as_ref()
             .and_then(|p| std::fs::metadata(p).ok())
             .map(|m| m.len());
 
         let backdrop = load_backdrop_image(background_image.as_deref())?;
+        let blur_source = load_blur_source(original_path.as_deref(), &fx)?;
         let render = image_ops::ExportRender {
             format,
             color,
             image: backdrop.as_ref(),
-            edge,
+            fx,
+            blur_source: blur_source.as_ref(),
         };
         image_ops::export_cutout(&result_path, std::path::Path::new(&destination), &render)?;
 
@@ -731,6 +897,23 @@ async fn export_png(
     })
     .await
     .map_err(|e| AppError::Io(format!("export task panicked: {e}")))?
+}
+
+/// Decodes the original photo when a blurred copy of it is the background,
+/// or returns `None` when no blur is wanted (or there is no original).
+fn load_blur_source(
+    path: Option<&str>,
+    fx: &image_ops::Effects,
+) -> Result<Option<DynamicImage>, AppError> {
+    if fx.blur_bg == 0 {
+        return Ok(None);
+    }
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    image::open(path)
+        .map(Some)
+        .map_err(|e| AppError::DecodeFailed(format!("original image: {e}")))
 }
 
 /// Decodes the picture the user chose to put behind the cutout, or returns
@@ -751,16 +934,81 @@ fn load_backdrop_image(path: Option<&str>) -> Result<Option<DynamicImage>, AppEr
 /// deleted when a new one is written (the slider can fire many times).
 static LAST_REFINED_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
-/// Builds the cutout as it would look with the given edge setting, so the
-/// Result pane can show the effect of the slider before exporting. Returns
-/// the original result path untouched when `edge` is 0.
+/// Builds the cutout as it would look with the chosen edge, size and shadow
+/// settings, so the Result pane can show them before exporting. Returns the
+/// original result path untouched when every setting is at its default.
 #[tauri::command]
-async fn preview_edges(
+async fn preview_cutout(
     app: tauri::AppHandle,
     result_path: String,
-    edge: i32,
+    original_path: Option<String>,
+    effects: Option<image_ops::Effects>,
 ) -> Result<String, AppError> {
-    if edge == 0 {
+    let fx = effects.unwrap_or_default();
+
+    if fx.is_default() {
+        return Ok(result_path);
+    }
+    if !std::path::Path::new(&result_path).exists() {
+        return Err(AppError::Io(
+            "The processed image is no longer available. Try removing the background again."
+                .to_string(),
+        ));
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let rgba = image::open(&result_path)
+            .map_err(|e| AppError::DecodeFailed(format!("result image: {e}")))?
+            .to_rgba8();
+        let shaped = image_ops::shape_cutout(rgba, &fx);
+        // With a blurred background the preview is the finished (opaque)
+        // picture, since the Result pane can't blur the original by itself.
+        let out: DynamicImage = match (fx.blur_bg > 0, original_path.as_deref()) {
+            (true, Some(p)) => {
+                let original = image::open(p)
+                    .map_err(|e| AppError::DecodeFailed(format!("original image: {e}")))?;
+                DynamicImage::ImageRgb8(image_ops::flatten_over_blur(&shaped, &original, &fx))
+            }
+            _ => DynamicImage::ImageRgba8(shaped),
+        };
+
+        let dir = results_dir(&app)?.join("refined");
+        std::fs::create_dir_all(&dir).map_err(|e| AppError::Io(e.to_string()))?;
+        let n = RESULT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let refined_path = dir.join(format!("refined-{}-{n}.png", std::process::id()));
+
+        out
+            .save_with_format(&refined_path, image::ImageFormat::Png)
+            .map_err(|e| AppError::EncodeFailed(e.to_string()))?;
+
+        if let Ok(mut last) = LAST_REFINED_PATH.lock() {
+            if let Some(old) = last.replace(refined_path.clone()) {
+                let _ = std::fs::remove_file(old);
+            }
+        }
+
+        Ok(refined_path.display().to_string())
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("cutout preview task panicked: {e}")))?
+}
+
+/// Files written by the touch-up brush for the image currently being edited.
+/// Each applied batch of strokes writes a new file (so Undo can step back to
+/// the one before); they are all deleted together when a new image is loaded
+/// or processed.
+static TOUCHUP_FILES: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// Paints touch-up brush strokes onto a cutout and returns the path of the
+/// new result file. The file passed in is never modified, which is what makes
+/// Undo a matter of going back to the previous path.
+#[tauri::command]
+async fn apply_touchup(
+    app: tauri::AppHandle,
+    result_path: String,
+    strokes: Vec<image_ops::BrushStroke>,
+) -> Result<String, AppError> {
+    if strokes.is_empty() {
         return Ok(result_path);
     }
     if !std::path::Path::new(&result_path).exists() {
@@ -774,27 +1022,160 @@ async fn preview_edges(
         let mut rgba = image::open(&result_path)
             .map_err(|e| AppError::DecodeFailed(format!("result image: {e}")))?
             .to_rgba8();
-        image_ops::refine_edges(&mut rgba, edge);
+        image_ops::apply_brush_strokes(&mut rgba, &strokes);
 
-        let dir = results_dir(&app)?.join("refined");
+        let dir = results_dir(&app)?.join("touchup");
         std::fs::create_dir_all(&dir).map_err(|e| AppError::Io(e.to_string()))?;
         let n = RESULT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let refined_path = dir.join(format!("refined-{}-{n}.png", std::process::id()));
+        let new_path = dir.join(format!("touchup-{}-{n}.png", std::process::id()));
 
         DynamicImage::ImageRgba8(rgba)
-            .save_with_format(&refined_path, image::ImageFormat::Png)
+            .save_with_format(&new_path, image::ImageFormat::Png)
             .map_err(|e| AppError::EncodeFailed(e.to_string()))?;
 
-        if let Ok(mut last) = LAST_REFINED_PATH.lock() {
-            if let Some(old) = last.replace(refined_path.clone()) {
-                let _ = std::fs::remove_file(old);
+        if let Ok(mut files) = TOUCHUP_FILES.lock() {
+            files.push(new_path.clone());
+        }
+
+        Ok(new_path.display().to_string())
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("touch-up task panicked: {e}")))?
+}
+
+/// Deletes every file written by the touch-up brush.
+#[tauri::command]
+fn clear_touchups() {
+    if let Ok(mut files) = TOUCHUP_FILES.lock() {
+        for file in files.drain(..) {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+}
+
+/// Renders the cutout exactly as it would be exported (with the chosen
+/// background, edges, size and shadow) as a PNG and returns the raw bytes,
+/// for the Copy button. Sent back as raw bytes rather than a JSON number
+/// array, for the same reason `save_pasted_image` receives them that way.
+#[tauri::command]
+async fn render_cutout_png(
+    result_path: String,
+    background: Option<String>,
+    background_image: Option<String>,
+    original_path: Option<String>,
+    effects: Option<image_ops::Effects>,
+) -> Result<tauri::ipc::Response, AppError> {
+    if !std::path::Path::new(&result_path).exists() {
+        return Err(AppError::Io(
+            "The processed image is no longer available. Try removing the background again."
+                .to_string(),
+        ));
+    }
+
+    let color = background.as_deref().and_then(image_ops::parse_hex_color);
+    let fx = effects.unwrap_or_default();
+
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let backdrop = load_backdrop_image(background_image.as_deref())?;
+        let blur_source = load_blur_source(original_path.as_deref(), &fx)?;
+        let render = image_ops::ExportRender {
+            format: image_ops::ExportFormat::Png,
+            color,
+            image: backdrop.as_ref(),
+            fx,
+            blur_source: blur_source.as_ref(),
+        };
+        image_ops::encode_cutout(&result_path, &render)
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("copy task panicked: {e}")))??;
+
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Folder holding the file most recently prepared for dragging out of the
+/// window. Replaced (and the old one deleted) each time a new file is prepared.
+static LAST_DRAG_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DragFiles {
+    /// The finished image, named after the original photo.
+    path: String,
+    /// A small preview picture shown under the cursor while dragging.
+    icon_path: String,
+}
+
+/// Renders the cutout exactly as an export would, into a temporary file the
+/// user can drag into another app, plus a small preview for the drag cursor.
+#[tauri::command]
+async fn prepare_drag_file(
+    app: tauri::AppHandle,
+    result_path: String,
+    file_stem: String,
+    format: Option<String>,
+    background: Option<String>,
+    background_image: Option<String>,
+    original_path: Option<String>,
+    effects: Option<image_ops::Effects>,
+) -> Result<DragFiles, AppError> {
+    if !std::path::Path::new(&result_path).exists() {
+        return Err(AppError::Io(
+            "The processed image is no longer available. Try removing the background again."
+                .to_string(),
+        ));
+    }
+
+    let format = image_ops::ExportFormat::from_key(format.as_deref());
+    let color = background.as_deref().and_then(image_ops::parse_hex_color);
+    let fx = effects.unwrap_or_default();
+
+    // Keep the file name friendly: drop characters Windows doesn't allow.
+    let stem: String = file_stem
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'))
+        .collect();
+    let stem = if stem.trim().is_empty() { "cutout".to_string() } else { stem.trim().to_string() };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let n = RESULT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = results_dir(&app)?
+            .join("drag")
+            .join(format!("{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|e| AppError::Io(e.to_string()))?;
+
+        let file = dir.join(format!("{stem}-cutout.{}", format.extension()));
+        let backdrop = load_backdrop_image(background_image.as_deref())?;
+        let blur_source = load_blur_source(original_path.as_deref(), &fx)?;
+        let render = image_ops::ExportRender {
+            format,
+            color,
+            image: backdrop.as_ref(),
+            fx,
+            blur_source: blur_source.as_ref(),
+        };
+        image_ops::export_cutout(&result_path, &file, &render)?;
+
+        let icon = dir.join("drag-preview.png");
+        image::open(&file)
+            .map_err(|e| AppError::DecodeFailed(format!("drag file: {e}")))?
+            .thumbnail(160, 160)
+            .save_with_format(&icon, image::ImageFormat::Png)
+            .map_err(|e| AppError::EncodeFailed(e.to_string()))?;
+
+        if let Ok(mut last) = LAST_DRAG_DIR.lock() {
+            if let Some(old) = last.replace(dir.clone()) {
+                let _ = std::fs::remove_dir_all(old);
             }
         }
 
-        Ok(refined_path.display().to_string())
+        Ok(DragFiles {
+            path: file.display().to_string(),
+            icon_path: icon.display().to_string(),
+        })
     })
     .await
-    .map_err(|e| AppError::Io(format!("edge preview task panicked: {e}")))?
+    .map_err(|e| AppError::Io(format!("drag preparation task panicked: {e}")))?
 }
 
 /// Writes raw image bytes (from a clipboard paste in the frontend, via the
@@ -847,11 +1228,11 @@ async fn export_batch(
     format: Option<String>,
     background: Option<String>,
     background_image: Option<String>,
-    edge: Option<i32>,
+    effects: Option<image_ops::Effects>,
 ) -> Result<Vec<String>, AppError> {
     let format = image_ops::ExportFormat::from_key(format.as_deref());
     let color = background.as_deref().and_then(image_ops::parse_hex_color);
-    let edge = edge.unwrap_or(0);
+    let fx = effects.unwrap_or_default();
     let ext = format.extension();
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -860,13 +1241,6 @@ async fn export_batch(
 
         // Decoded once and reused for every image in the batch.
         let backdrop = load_backdrop_image(background_image.as_deref())?;
-        let render = image_ops::ExportRender {
-            format,
-            color,
-            image: backdrop.as_ref(),
-            edge,
-        };
-
         let mut failures = Vec::new();
 
         for item in items {
@@ -883,6 +1257,16 @@ async fn export_batch(
                 target = dest_dir.join(format!("{base_name}-cutout-{suffix}.{ext}"));
                 suffix += 1;
             }
+
+            // A blurred background is made from each image's own original.
+            let blur_source = load_blur_source(Some(item.source_path.as_str()), &fx).unwrap_or(None);
+            let render = image_ops::ExportRender {
+                format,
+                color,
+                image: backdrop.as_ref(),
+                fx: fx.clone(),
+                blur_source: blur_source.as_ref(),
+            };
 
             if let Err(e) = image_ops::export_cutout(&item.result_path, &target, &render) {
                 eprintln!("[batch export] failed for {}: {e}", item.source_path);
@@ -914,6 +1298,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_drag::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
@@ -935,8 +1320,15 @@ pub fn run() {
             cancel_processing,
             export_png,
             export_batch,
-            preview_edges,
-            save_pasted_image
+            preview_cutout,
+            save_pasted_image,
+            apply_touchup,
+            clear_touchups,
+            render_cutout_png,
+            prepare_drag_file,
+            list_custom_models,
+            import_custom_model,
+            delete_custom_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

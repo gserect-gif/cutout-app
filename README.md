@@ -5,7 +5,31 @@ subscription, no resolution limit. Everything runs offline.
 
 ## Demo
 
+![Cutout screenshot](docs/screenshot.png)
+
 https://github.com/user-attachments/assets/6539456f-e150-4a4b-8e6d-6c7438f2d857
+
+## Screenshots
+
+**Gradient background**
+
+![Gradient background](docs/screenshot-gradient.png)
+
+**Blurred photo background**
+
+![Blurred photo background](docs/screenshot-blur.png)
+
+**Export options: color adjust, flip and rotate, size, auto-crop**
+
+![Export options](docs/screenshot-export-options.png)
+
+**Your own models** (Settings > Custom models)
+
+![Custom models](docs/screenshot-custom-models.png)
+
+**Compare, touch up, copy and drag out**
+
+![Footer buttons](docs/screenshot-footer.png)
 
 ## Community
 
@@ -19,11 +43,27 @@ You can also open an issue: https://github.com/gserect-gif/cutout-app/issues
 - Drag and drop, browse, or paste an image (PNG, JPG, WebP, BMP, TIFF, GIF)
 - Batch mode: pick several images or a whole folder (subfolders included) and
   export everything at once
-- Four AI models, from fast to best quality (see below)
-- Output keeps the original resolution. Export as PNG, JPG or WebP, with a
-  transparent background, any solid color from a color wheel, or a picture of
-  your choice behind the cutout
-- Edge slider to make the cutout's edge sharper or softer
+- Four built-in AI models, from fast to best quality (see below), plus your
+  own: import any compatible ONNX model and give it a name and description
+- Output keeps the original resolution. Export as PNG, JPG or WebP
+- Backgrounds: transparent, any solid color (color wheel, hex field, or an
+  eyedropper that picks a color from anywhere on screen), a two-color
+  gradient with an angle, a picture of your choice, or a blurred copy of your
+  own photo
+- Edge controls: a softness slider (sharper or softer), shrink or grow the
+  cutout's edge, and color defringe to remove leftover halos
+- Sticker outline with a color and width, and a soft drop shadow
+- Brightness, contrast and saturation, flip and rotate
+- Size presets (square, portrait, story, thumbnail, ID photo, profile
+  picture, banner) or your own custom width and height, and auto-crop to trim
+  the empty space around the subject
+- Saved presets: name a whole look and bring it back with one click
+- Touch-up brush to restore or erase parts the AI got wrong, with undo and
+  redo
+- Before/after compare slider
+- Paste an image with Ctrl+V, copy the finished cutout to the clipboard, or
+  drag it straight out of the window into another app
+- Live preview: the Result pane shows every setting before you export
 - Remembers its window size and position
 - Zoom and pan the preview, Dark / Light / System theme
 - Cancel any run at any time (Esc works too)
@@ -60,6 +100,26 @@ this once.
 | Best+ | slowest | Sharpest results, best for final exports |
 
 Licenses and credits for each model are in `THIRD_PARTY_NOTICES.md`.
+
+### Your own models
+
+Open **Settings > Custom models**, choose a `.onnx` file, give it a name and a
+description, pick the model type and its input size, and click **Add model**.
+It then appears in the model list next to the built-in ones, and the
+description shows when you hover it.
+
+The model must take a single RGB image and return a single-channel mask the
+same size as its input. Pick the type it was trained like:
+
+| Type | Input size | Examples |
+| --- | --- | --- |
+| BiRefNet style | 1024 | BiRefNet models |
+| IS-Net style | 1024 | `isnet-general-use`, `isnet-anime` |
+| U2-Net style | 320 | `u2netp`, `u2net_human_seg`, `silueta` |
+
+A wrong type or input size gives bad cutouts or an error. Imported models are
+copied into Cutout's own data folder, so you can delete the original file.
+You are responsible for the license of any model you add.
 
 ## Privacy
 
@@ -125,7 +185,7 @@ The macOS and Linux builds are new and have had less testing than Windows.
 `.github/workflows/build.yml` builds Windows, macOS and Linux installers on
 GitHub's servers. Run it from the Actions tab (**Build installers > Run
 workflow**) and download the installers from the run page, or push a tag such
-as `v0.1.0` to get a draft Release with all three attached.
+as `v2.0.0` to get a draft Release with all three attached.
 
 ## License
 
