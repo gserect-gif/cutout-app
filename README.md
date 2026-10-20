@@ -7,6 +7,8 @@ subscription, no resolution limit. Everything runs offline.
 
 ![Cutout screenshot](docs/screenshot.png)
 
+https://github.com/user-attachments/assets/6aed57b8-a1c2-4c5d-8acc-17a72fbd23e2
+
 https://github.com/user-attachments/assets/6539456f-e150-4a4b-8e6d-6c7438f2d857
 
 ## Screenshots
