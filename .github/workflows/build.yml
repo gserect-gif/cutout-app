@@ -156,6 +156,12 @@ jobs:
       # anyone but the build user. Unpack it, fix the permissions, and pack it
       # again. If this step fails the job turns red on purpose, so a broken
       # repack is visible instead of silently shipping the original file.
+      #
+      # The same step also removes the bundled libwayland-* libraries. They
+      # come from Ubuntu 24.04 and don't work with the newer Mesa on distros
+      # like Fedora: the window stays blank and the log shows "Could not create
+      # default EGL display: EGL_BAD_PARAMETER" (issue #1). Every Linux desktop
+      # already has these libraries, so the app uses the system's copy instead.
       - name: Fix AppImage permissions (Linux)
         id: fixappimage
         if: matrix.os == 'ubuntu-24.04'
@@ -170,6 +176,7 @@ jobs:
           chmod a+x squashfs-root/AppRun
           if [ -f squashfs-root/AppRun.wrapped ]; then chmod a+x squashfs-root/AppRun.wrapped; fi
           if [ -d squashfs-root/usr/bin ]; then find squashfs-root/usr/bin -type f -exec chmod a+x {} +; fi
+          rm -fv squashfs-root/usr/lib/libwayland-*
           wget -q -O appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           rm "$APPIMAGE"
