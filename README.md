@@ -30,9 +30,9 @@ Open **Settings > GPU acceleration**.
 
 Windows uses DirectML, which works with NVIDIA, AMD and Intel graphics. We
 have only been able to test it on integrated graphics so far, not on a
-dedicated card. GPU support on macOS and Linux is experimental and untested;
-on Apple Silicon Macs the graphics are built into the chip, so Auto uses the
-CPU there.
+dedicated card. GPU support on macOS is experimental and untested; on Apple
+Silicon Macs the graphics are built into the chip, so Auto uses the CPU
+there. Linux uses the CPU in this version.
 
 ![GPU acceleration set to Auto](docs/screenshot-gpu-auto.png)
 

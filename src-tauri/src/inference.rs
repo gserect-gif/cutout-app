@@ -176,14 +176,14 @@ fn gpu_plan() -> GpuPlan {
     }
 }
 
-/// The GPU technology Cutout uses on this operating system, if any.
+/// The GPU technology Cutout uses on this operating system, if any. Linux has
+/// none in this version (a WebGPU build broke the AppImage packaging), so it
+/// runs on the CPU.
 pub fn gpu_technology() -> Option<&'static str> {
     if cfg!(target_os = "windows") {
         Some("DirectML")
     } else if cfg!(target_os = "macos") {
         Some("CoreML")
-    } else if cfg!(target_os = "linux") {
-        Some("WebGPU")
     } else {
         None
     }
@@ -207,12 +207,7 @@ fn gpu_provider(_device_index: Option<i32>) -> Option<ExecutionProviderDispatch>
     Some(ort::ep::CoreML::default().build().error_on_failure())
 }
 
-#[cfg(target_os = "linux")]
-fn gpu_provider(_device_index: Option<i32>) -> Option<ExecutionProviderDispatch> {
-    Some(ort::ep::WebGPU::default().build().error_on_failure())
-}
-
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn gpu_provider(_device_index: Option<i32>) -> Option<ExecutionProviderDispatch> {
     None
 }

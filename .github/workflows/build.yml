@@ -102,25 +102,28 @@ jobs:
         run: npm ci
 
       # GPU acceleration on Windows (DirectML) needs DirectML.dll next to the
-      # app. The build copies it into target/release, but only after the app
-      # has been compiled, so compile once first and then tell the installer
-      # build to include it. If the file isn't there, the installer is built
-      # without it (the app then uses the DLL that ships with Windows, or the
-      # CPU) and this step prints a warning.
-      - name: Prepare the GPU runtime (Windows)
+      # app. Download Microsoft's official copy and tell the installer build
+      # to include it. (Compiling the app once first to pick up the copy that
+      # the build makes failed: the second compile overwrote the first one's
+      # files while Windows still had them open.) If the download fails, the
+      # installer is built without the file (the app then uses the DLL that
+      # ships with Windows, or the CPU) and this step prints a warning.
+      - name: Get DirectML.dll for the installer (Windows)
         if: matrix.os == 'windows-latest'
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          npm run build
-          cargo build --release --manifest-path src-tauri/Cargo.toml
-          ls -l src-tauri/target/release/*.dll || true
-          if [ -f src-tauri/target/release/DirectML.dll ]; then
-            echo '{"bundle":{"resources":{"target/release/DirectML.dll":"DirectML.dll"}}}' > src-tauri/tauri.directml.conf.json
-          else
-            echo '::warning::DirectML.dll was not found in target/release, so the installer is built without it.'
-            echo '{}' > src-tauri/tauri.directml.conf.json
-          fi
+          $config = '{}'
+          try {
+            Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/Microsoft.AI.DirectML/1.15.4" -OutFile "$env:RUNNER_TEMP\dml.zip"
+            Expand-Archive -Path "$env:RUNNER_TEMP\dml.zip" -DestinationPath "$env:RUNNER_TEMP\dml" -Force
+            Copy-Item "$env:RUNNER_TEMP\dml\bin\x64-win\DirectML.dll" "src-tauri\DirectML.dll" -ErrorAction Stop
+            Get-Item "src-tauri\DirectML.dll" | Format-List Name, Length
+            $config = '{"bundle":{"resources":{"DirectML.dll":"DirectML.dll"}}}'
+          } catch {
+            Write-Host "::warning::Could not get DirectML.dll ($_). The installer is built without it."
+          }
+          Set-Content -Path "src-tauri\tauri.directml.conf.json" -Value $config -Encoding ascii
+          Get-Content "src-tauri\tauri.directml.conf.json"
 
       - name: Build
         uses: tauri-apps/tauri-action@v0

@@ -36,7 +36,8 @@ ureq = "3"
 
 # GPU acceleration: each OS gets its own provider, which makes the build link a
 # ONNX Runtime that includes it. If the GPU can't be used when the app runs,
-# Cutout falls back to the CPU on its own.
+# Cutout falls back to the CPU on its own. Linux has none in this version: a
+# WebGPU build broke the AppImage packaging.
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { version = "2.0.0-rc.13", features = ["directml"] }
 # Lists the graphics adapters so Auto GPU mode can tell a dedicated card from integrated graphics.
@@ -44,9 +45,6 @@ windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_Graphics
 
 [target.'cfg(target_os = "macos")'.dependencies]
 ort = { version = "2.0.0-rc.13", features = ["coreml"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-ort = { version = "2.0.0-rc.13", features = ["webgpu"] }
 
 # Used only for lightweight, direct Windows process-memory instrumentation
 # ([perf] logging) during the current investigation into RAM usage across
