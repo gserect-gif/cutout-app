@@ -13,6 +13,41 @@ https://github.com/user-attachments/assets/6aed57b8-a1c2-4c5d-8acc-17a72fbd23e2
 
 https://github.com/user-attachments/assets/6539456f-e150-4a4b-8e6d-6c7438f2d857
 
+## New in 2.1.0
+
+### GPU acceleration: Auto, On or Off
+
+Open **Settings > GPU acceleration**.
+
+- **Auto** (the default) uses your graphics card only when it is a dedicated
+  one, meaning a separate card with its own memory. Graphics built into the
+  processor stay off, because they were slower than the CPU in our test:
+  about 81 seconds versus 22 seconds for one image on a PC with integrated
+  Ryzen graphics.
+- **On** always tries the GPU. **Off** always uses the CPU. Both override Auto.
+- If the GPU can't run a model, Cutout switches to the CPU by itself, so
+  nothing breaks. The Settings screen tells you what Auto decided.
+
+Windows uses DirectML, which works with NVIDIA, AMD and Intel graphics. We
+have only been able to test it on integrated graphics so far, not on a
+dedicated card. GPU support on macOS and Linux is experimental and untested;
+on Apple Silicon Macs the graphics are built into the chip, so Auto uses the
+CPU there.
+
+![GPU acceleration set to Auto](docs/screenshot-gpu-auto.png)
+
+![GPU acceleration set to On](docs/screenshot-gpu-on.png)
+
+![GPU acceleration set to Off](docs/screenshot-gpu-off.png)
+
+### Check for updates
+
+**Settings > Updates > Check for updates** tells you if a newer version is
+available and opens the download page. Cutout only connects to GitHub when you
+click that button, never by itself.
+
+![Check for updates](docs/screenshot-updates.png)
+
 ## Screenshots
 
 **Gradient background**
@@ -71,6 +106,9 @@ You can also open an issue: https://github.com/gserect-gif/cutout-app/issues
 - Remembers its window size and position
 - Zoom and pan the preview, Dark / Light / System theme
 - Cancel any run at any time (Esc works too)
+- GPU acceleration that picks itself: Auto uses a dedicated graphics card and
+  skips integrated graphics, with manual On and Off
+- Check for updates button (only connects to GitHub when you click it)
 
 ## Install (Windows)
 
@@ -92,7 +130,8 @@ this once.
   it starts.
 - 8 GB of RAM or more recommended. The Best models briefly use several GB
   while processing an image.
-- No GPU needed. Cutout runs on the CPU.
+- No GPU needed. Cutout runs on the CPU. If you have a dedicated graphics
+  card, the Auto setting uses it for a speedup (see "New in 2.1.0").
 
 ## Models
 
@@ -128,7 +167,9 @@ You are responsible for the license of any model you add.
 ## Privacy
 
 Cutout never connects to the internet to process images. Your pictures stay
-on your computer. (The Windows installer may download Microsoft's WebView2
+on your computer. The only time Cutout connects to anything is when you click
+**Check for updates** in Settings, which asks GitHub for the latest version
+number. (The Windows installer may download Microsoft's WebView2
 component if your PC doesn't already have it.)
 
 ## Troubleshooting
@@ -189,7 +230,7 @@ The macOS and Linux builds are new and have had less testing than Windows.
 `.github/workflows/build.yml` builds Windows, macOS and Linux installers on
 GitHub's servers. Run it from the Actions tab (**Build installers > Run
 workflow**) and download the installers from the run page, or push a tag such
-as `v2.0.0` to get a draft Release with all three attached.
+as `v2.1.0` to get a draft Release with all three attached.
 
 ## License
 

@@ -27,7 +27,7 @@ jobs:
         include:
           - name: Windows
             os: windows-latest
-            args: "--bundles nsis"
+            args: "--bundles nsis --config src-tauri/tauri.directml.conf.json"
             artifact: "src-tauri/target/release/bundle/nsis/*.exe"
           - name: macOS (Apple Silicon)
             os: macos-latest
@@ -101,6 +101,27 @@ jobs:
       - name: Install npm packages
         run: npm ci
 
+      # GPU acceleration on Windows (DirectML) needs DirectML.dll next to the
+      # app. The build copies it into target/release, but only after the app
+      # has been compiled, so compile once first and then tell the installer
+      # build to include it. If the file isn't there, the installer is built
+      # without it (the app then uses the DLL that ships with Windows, or the
+      # CPU) and this step prints a warning.
+      - name: Prepare the GPU runtime (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          cargo build --release --manifest-path src-tauri/Cargo.toml
+          ls -l src-tauri/target/release/*.dll || true
+          if [ -f src-tauri/target/release/DirectML.dll ]; then
+            echo '{"bundle":{"resources":{"target/release/DirectML.dll":"DirectML.dll"}}}' > src-tauri/tauri.directml.conf.json
+          else
+            echo '::warning::DirectML.dll was not found in target/release, so the installer is built without it.'
+            echo '{}' > src-tauri/tauri.directml.conf.json
+          fi
+
       - name: Build
         uses: tauri-apps/tauri-action@v0
         env:
@@ -110,6 +131,22 @@ jobs:
           releaseName: "Cutout ${{ github.ref_name }}"
           releaseDraft: true
           args: ${{ matrix.args }}
+
+      # The Linux GPU runtime must be built into the app. If the build left
+      # extra shared libraries beside it, the installer would not contain them
+      # and the app would fail to start, so stop here instead of shipping that.
+      - name: Check the Linux build has no loose libraries
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l src-tauri/target/release/ | head -50
+          extra=$(ls src-tauri/target/release/*.so* 2>/dev/null | grep -v bgremover_lib || true)
+          if [ -n "$extra" ]; then
+            echo "The build produced shared libraries the installer does not include:" >&2
+            echo "$extra" >&2
+            exit 1
+          fi
 
       # The AppImage catalog's test bot found the Linux AppImage can't start
       # for other users: some files inside it lack read/execute permission for

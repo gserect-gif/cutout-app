@@ -1201,3 +1201,13 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* The GPU On/Off switch: two equal halves (without this the last button stretched). */
+#gpuToggle {
+  width: 100%;
+}
+
+#gpuToggle .theme-option {
+  flex: 1 1 0;
+  text-align: center;
+}

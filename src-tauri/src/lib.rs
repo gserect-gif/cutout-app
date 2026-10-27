@@ -1,5 +1,6 @@
 mod cpucheck;
 mod image_ops;
+mod gpu_detect;
 mod inference;
 mod memstat;
 
@@ -333,6 +334,96 @@ fn resolve_model_spec(
         .and_then(inference::ModelId::from_key)
         .unwrap_or(inference::ModelId::BiRefNetLite);
     Ok(inference::ModelSpec::bundled(id, resolve_model_path(app, id)))
+}
+
+/// Sets the GPU mode ("auto", "on" or "off"). It applies from the next cutout.
+#[tauri::command]
+async fn set_gpu_mode(mode: String) {
+    inference::set_gpu_mode(&mode);
+}
+
+/// What the Settings screen shows about GPU acceleration.
+#[tauri::command]
+fn gpu_status() -> inference::GpuStatus {
+    inference::gpu_status()
+}
+
+/// The result of asking GitHub for the newest release.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInfo {
+    current: String,
+    latest: String,
+    update_available: bool,
+    url: String,
+}
+
+const LATEST_RELEASE_API: &str =
+    "https://api.github.com/repos/gserect-gif/cutout-app/releases/latest";
+const RELEASES_PAGE: &str = "https://github.com/gserect-gif/cutout-app/releases";
+
+/// Splits "2.10.1" (or "v2.10.1-beta") into its numbers, so versions compare
+/// as numbers: 2.10 is newer than 2.9.
+fn version_numbers(version: &str) -> Vec<u64> {
+    version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.parse().unwrap_or(0))
+        .collect()
+}
+
+fn version_is_newer(latest: &str, current: &str) -> bool {
+    let (a, b) = (version_numbers(latest), version_numbers(current));
+    for i in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+/// Asks GitHub whether a newer release exists. This is the only place Cutout
+/// connects to the internet, and it only runs when the user clicks
+/// "Check for updates" in Settings.
+#[tauri::command]
+async fn check_for_updates() -> Result<UpdateInfo, AppError> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build()
+            .into();
+
+        let mut response = agent
+            .get(LATEST_RELEASE_API)
+            .header("User-Agent", "Cutout-update-check")
+            .header("Accept", "application/vnd.github+json")
+            .call()
+            .map_err(|e| AppError::Io(format!("Couldn't reach GitHub: {e}")))?;
+        let text = response
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| AppError::Io(format!("Couldn't read GitHub's answer: {e}")))?;
+        let json: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| AppError::Io(format!("GitHub's answer wasn't understood: {e}")))?;
+
+        let tag = json["tag_name"]
+            .as_str()
+            .ok_or_else(|| AppError::Io("GitHub didn't return a version number.".into()))?;
+        let latest = tag.trim_start_matches(|c: char| c == 'v' || c == 'V').to_string();
+        let current = env!("CARGO_PKG_VERSION").to_string();
+        let url = json["html_url"].as_str().unwrap_or(RELEASES_PAGE).to_string();
+        let update_available = version_is_newer(&latest, &current);
+
+        Ok(UpdateInfo {
+            current,
+            latest,
+            update_available,
+            url,
+        })
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("update check task panicked: {e}")))?
 }
 
 #[tauri::command]
@@ -1328,7 +1419,10 @@ pub fn run() {
             prepare_drag_file,
             list_custom_models,
             import_custom_model,
-            delete_custom_model
+            delete_custom_model,
+            set_gpu_mode,
+            gpu_status,
+            check_for_updates
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2351,6 +2351,7 @@ themeToggle.addEventListener("click", (e) => {
 
 settingsBtn.addEventListener("click", () => {
   settingsOverlay.classList.remove("hidden");
+  void refreshGpuStatus();
 });
 
 settingsCloseBtn.addEventListener("click", () => {
@@ -2378,6 +2379,130 @@ for (const link of settingsOverlay.querySelectorAll<HTMLButtonElement>(".communi
     }
   });
 }
+
+// ---------- GPU acceleration ----------
+
+interface GpuAdapterInfo {
+  name: string;
+  dedicated: boolean;
+  memoryMb: number;
+}
+
+interface GpuStatus {
+  technology: string | null; // the GPU technology for this OS, null when there isn't one
+  mode: "auto" | "on" | "off";
+  usingGpu: boolean; // whether the next cutout will try the GPU
+  card: string | null; // the graphics card that will be used
+  adapters: GpuAdapterInfo[]; // every graphics adapter found
+  lastBackend: string | null; // what the most recent cutout ran on
+}
+
+type GpuMode = "auto" | "on" | "off";
+
+const GPU_STORAGE_KEY = "cutout-gpu-mode";
+const gpuToggle = document.getElementById("gpuToggle") as HTMLElement;
+const gpuStatusText = document.getElementById("gpuStatusText") as HTMLElement;
+let gpuMode: GpuMode = (() => {
+  const saved = window.localStorage.getItem(GPU_STORAGE_KEY);
+  return saved === "on" || saved === "off" ? saved : "auto";
+})();
+
+async function refreshGpuStatus() {
+  for (const btn of gpuToggle.querySelectorAll<HTMLButtonElement>(".theme-option")) {
+    btn.classList.toggle("active", btn.dataset.gpu === gpuMode);
+  }
+  try {
+    const s = await invoke<GpuStatus>("gpu_status");
+    let text: string;
+    if (!s.technology) {
+      text = "GPU acceleration isn't available on this system, so Cutout uses the CPU.";
+    } else if (s.mode === "off") {
+      text = "Off: Cutout uses the CPU.";
+    } else if (s.mode === "auto") {
+      if (s.usingGpu && s.card) {
+        text = `Auto: using your graphics card (${s.card}).`;
+      } else if (s.adapters.length > 0) {
+        const names = s.adapters.map((a) => a.name).join(", ");
+        text = `Auto: no dedicated graphics card found (${names}). Integrated graphics are slower than the CPU for Cutout, so the CPU is used.`;
+      } else {
+        text = "Auto: no graphics card was detected, so the CPU is used.";
+      }
+    } else if (s.card) {
+      text = `On: using ${s.card} (${s.technology}).`;
+    } else {
+      text = `On (${s.technology}): using your graphics. Integrated graphics can be slower than the CPU.`;
+    }
+    if (s.usingGpu && s.lastBackend === "CPU") {
+      text += " The last cutout ran on the CPU because the GPU couldn't be used.";
+    } else if (s.usingGpu && s.lastBackend) {
+      text += ` The last cutout ran on the GPU (${s.lastBackend}).`;
+    }
+    gpuStatusText.textContent = text;
+  } catch (err) {
+    console.warn("gpu_status failed:", err);
+  }
+}
+
+gpuToggle.addEventListener("click", async (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".theme-option");
+  const mode = btn?.dataset.gpu;
+  if (mode !== "auto" && mode !== "on" && mode !== "off") return;
+  gpuMode = mode;
+  window.localStorage.setItem(GPU_STORAGE_KEY, gpuMode);
+  try {
+    await invoke("set_gpu_mode", { mode: gpuMode });
+  } catch (err) {
+    console.error("set_gpu_mode failed:", err);
+    showToast(readableError(err), true);
+  }
+  await refreshGpuStatus();
+});
+
+// ---------- Update check ----------
+// The only time Cutout talks to the internet: when this button is clicked.
+
+interface UpdateInfo {
+  current: string;
+  latest: string;
+  updateAvailable: boolean;
+  url: string;
+}
+
+const checkUpdatesBtn = document.getElementById("checkUpdatesBtn") as HTMLButtonElement;
+const updateStatus = document.getElementById("updateStatus") as HTMLElement;
+const openUpdateBtn = document.getElementById("openUpdateBtn") as HTMLButtonElement;
+let updateUrl: string | null = null;
+
+checkUpdatesBtn.addEventListener("click", async () => {
+  checkUpdatesBtn.disabled = true;
+  openUpdateBtn.classList.add("hidden");
+  updateStatus.textContent = "Checking GitHub...";
+  try {
+    const info = await invoke<UpdateInfo>("check_for_updates");
+    if (info.updateAvailable) {
+      updateUrl = info.url;
+      updateStatus.textContent = `Version ${info.latest} is available. You have ${info.current}.`;
+      openUpdateBtn.classList.remove("hidden");
+    } else {
+      updateStatus.textContent = `You're up to date (version ${info.current}).`;
+    }
+  } catch (err) {
+    console.error("check_for_updates failed:", err);
+    updateStatus.textContent = readableError(err);
+  } finally {
+    checkUpdatesBtn.disabled = false;
+  }
+});
+
+openUpdateBtn.addEventListener("click", async () => {
+  if (!updateUrl) return;
+  try {
+    await openUrl(updateUrl);
+  } catch (err) {
+    console.error("openUrl failed:", err);
+    showToast("Couldn't open the link in your browser.", true);
+  }
+});
 
 // ---------- Model picker ----------
 
@@ -2579,3 +2704,8 @@ getVersion()
 void initModelPicker();
 void refreshCustomModels();
 renderPresetSelect();
+
+// Tell the backend whether GPU acceleration is allowed before the first cutout.
+invoke("set_gpu_mode", { mode: gpuMode })
+  .then(() => refreshGpuStatus())
+  .catch((err) => console.warn("set_gpu_mode failed:", err));

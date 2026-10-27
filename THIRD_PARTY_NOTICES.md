@@ -31,6 +31,9 @@ Notes:
 | Tauri plugins (dialog, opener, window-state) | MIT or Apache-2.0 |
 | tauri-plugin-drag / drag-rs (CrabNebula) | MIT or Apache-2.0 |
 | ONNX Runtime (via the `ort` crate) | MIT |
+| DirectML (Microsoft), used for GPU acceleration on Windows | Distributed by Microsoft under its own terms: https://github.com/microsoft/DirectML |
+| `ureq` (used only for the update check) | MIT or Apache-2.0 |
+| `windows` crate (Microsoft), used to detect graphics cards | MIT or Apache-2.0 |
 | `image` crate | MIT or Apache-2.0 |
 
 The full dependency list is in `package.json` and `src-tauri/Cargo.toml`.

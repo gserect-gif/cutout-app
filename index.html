@@ -52,6 +52,22 @@
           <p class="settings-version hidden" id="appVersion"></p>
         </div>
         <div class="settings-section">
+          <span class="settings-section-title">GPU acceleration</span>
+          <div class="theme-toggle" id="gpuToggle">
+            <button class="theme-option" data-gpu="auto">Auto</button>
+            <button class="theme-option" data-gpu="on">On</button>
+            <button class="theme-option" data-gpu="off">Off</button>
+          </div>
+          <p class="settings-hint" id="gpuStatusText" style="margin: 0"></p>
+          <p class="settings-hint" style="margin: 0">Auto (recommended) uses your graphics card only when it is a dedicated one. Graphics built into the processor are usually slower than the CPU for Cutout, so Auto leaves them off. On and Off override that. If the GPU doesn't work for a model, Cutout switches to the CPU by itself. A change applies to the next cutout.</p>
+        </div>
+        <div class="settings-section">
+          <span class="settings-section-title">Updates</span>
+          <button id="checkUpdatesBtn" class="btn btn-ghost btn-small">Check for updates</button>
+          <p class="settings-hint" id="updateStatus" style="margin: 0">Cutout only connects to GitHub when you click this button.</p>
+          <button id="openUpdateBtn" class="btn btn-primary btn-small hidden">Open the download page</button>
+        </div>
+        <div class="settings-section">
           <span class="settings-section-title">Custom models</span>
           <p class="settings-hint" style="margin: 0">Add your own ONNX background-removal model. It shows up in the model list next to Fast, Balanced and Best.</p>
           <button id="addModelChooseBtn" class="btn btn-ghost btn-small">Choose .onnx file&hellip;</button>
