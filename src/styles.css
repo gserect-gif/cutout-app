@@ -11,6 +11,12 @@
   --accent: #6c8cff;
   --accent-hover: #7f9cff;
   --accent-dim: rgba(108, 140, 255, 0.14);
+  /* Text color on top of the accent color (buttons). A custom theme sets it
+     from the accent's brightness. */
+  --on-accent: #0b0e14;
+  /* Color of big surfaces (title bar, panes, lists). Same as --bg-1, but a
+     custom theme with a background picture makes it see-through. */
+  --panel: var(--bg-1);
   --danger: #ff6b6b;
   --success: #52c785;
   --radius-lg: 14px;
@@ -86,7 +92,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 14px;
-  background: var(--bg-1);
+  background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
 
@@ -131,6 +137,8 @@ body {
   flex-direction: column;
   min-height: 0;
   padding: 20px;
+  position: relative;
+  z-index: 1;
 }
 
 .hidden {
@@ -146,7 +154,7 @@ body {
   justify-content: center;
   border: 1.5px dashed var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-1);
+  background: var(--panel);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
@@ -214,7 +222,7 @@ body {
 
 .btn-primary {
   background: var(--accent);
-  color: #0b0e14;
+  color: var(--on-accent);
 }
 
 .btn-primary:hover {
@@ -356,7 +364,7 @@ body {
   position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-1);
+  background: var(--panel);
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -525,7 +533,7 @@ body {
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-1);
+  background: var(--panel);
   padding: 6px;
   display: flex;
   flex-direction: column;
@@ -721,7 +729,7 @@ body {
 
 .theme-option.active {
   background: var(--accent);
-  color: #0b0e14;
+  color: var(--on-accent);
 }
 
 /* ---------- Community links (Settings) ---------- */
@@ -1210,4 +1218,114 @@ body {
 #gpuToggle .theme-option {
   flex: 1 1 0;
   text-align: center;
+}
+
+/* ---------- Custom themes ---------- */
+
+/* The optional background picture of a custom theme sits behind everything.
+   The title bar and the main area are lifted above it (z-index 1). */
+.titlebar {
+  position: relative;
+  z-index: 1;
+}
+
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.app-bg-image {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.app-bg-dim {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-0);
+  opacity: 0;
+}
+
+.theme-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+}
+
+.theme-editor .theme-toggle {
+  width: 100%;
+}
+
+.theme-editor .theme-option {
+  flex: 1;
+}
+
+.theme-color-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+/* Models you can download (Lite installer) */
+.model-dl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+.model-dl-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.model-dl-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.model-dl-status {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.model-dl-status.error {
+  color: var(--danger);
+}
+
+.model-progress {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+
+.model-progress-bar {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+
+/* Subject position: the cutout can be dragged in the Result preview. */
+.pane-frame.subject-draggable img#resultImg {
+  cursor: move;
 }

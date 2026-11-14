@@ -265,8 +265,11 @@ pub fn refine_edges(img: &mut RgbaImage, edge: i32) {
 
 /// Fits the visible part of the cutout onto a transparent canvas of exactly
 /// `cw` x `ch` pixels. The cutout is first trimmed to the bounding box of what
-/// is actually visible, then scaled to fit with a small margin, and centred.
-fn fit_to_canvas(src: &RgbaImage, cw: u32, ch: u32) -> RgbaImage {
+/// is actually visible, then scaled to fit inside the padding, and placed on
+/// the canvas: centred by default, or moved and resized by the subject
+/// position settings in `fx` (`padding`, `subject_size`, `subject_x`,
+/// `subject_y`).
+fn fit_to_canvas(src: &RgbaImage, cw: u32, ch: u32, fx: &Effects) -> RgbaImage {
     let (w, h) = src.dimensions();
     let mut canvas = RgbaImage::new(cw, ch);
 
@@ -288,18 +291,31 @@ fn fit_to_canvas(src: &RgbaImage, cw: u32, ch: u32) -> RgbaImage {
     let bh = max_y - min_y + 1;
     let cropped = image::imageops::crop_imm(src, min_x, min_y, bw, bh).to_image();
 
-    const MARGIN: f32 = 0.06;
-    let avail_w = cw as f32 * (1.0 - 2.0 * MARGIN);
-    let avail_h = ch as f32 * (1.0 - 2.0 * MARGIN);
-    let scale = (avail_w / bw as f32).min(avail_h / bh as f32);
-    let nw = ((bw as f32 * scale).round() as u32).clamp(1, cw);
-    let nh = ((bh as f32 * scale).round() as u32).clamp(1, ch);
+    // Padding is a percentage of the canvas kept free on each side (6 by
+    // default, the original behavior). The subject size is a percentage of
+    // what fits inside that padding (0 means 100).
+    let pad = fx.padding.unwrap_or(6).min(40) as f32 / 100.0;
+    let size = if fx.subject_size == 0 {
+        1.0
+    } else {
+        fx.subject_size.clamp(20, 300) as f32 / 100.0
+    };
+    let avail_w = (cw as f32 * (1.0 - 2.0 * pad)).max(1.0);
+    let avail_h = (ch as f32 * (1.0 - 2.0 * pad)).max(1.0);
+    let scale = (avail_w / bw as f32).min(avail_h / bh as f32) * size;
+    // Capped so a huge size on a huge canvas can't use unbounded memory.
+    let nw = ((bw as f32 * scale).round() as u32).clamp(1, 12000);
+    let nh = ((bh as f32 * scale).round() as u32).clamp(1, 12000);
 
     let resized =
         image::imageops::resize(&cropped, nw, nh, image::imageops::FilterType::CatmullRom);
-    let x = (cw - nw) / 2;
-    let y = (ch - nh) / 2;
-    image::imageops::overlay(&mut canvas, &resized, x as i64, y as i64);
+    // Centred, then moved by up to half the canvas size at -100 / +100. The
+    // subject may be pushed partly outside the canvas; it is simply clipped.
+    let move_x = fx.subject_x.clamp(-100, 100) as i64 * cw as i64 / 200;
+    let move_y = fx.subject_y.clamp(-100, 100) as i64 * ch as i64 / 200;
+    let x = (cw as i64 - nw as i64) / 2 + move_x;
+    let y = (ch as i64 - nh as i64) / 2 + move_y;
+    image::imageops::overlay(&mut canvas, &resized, x, y);
     canvas
 }
 
@@ -366,6 +382,17 @@ pub struct Effects {
     /// means keep the original image size.
     pub canvas_width: Option<u32>,
     pub canvas_height: Option<u32>,
+    /// Where the subject sits on the canvas (only used with a canvas size).
+    /// Padding: percent of the canvas kept free on each side, 0 to 40;
+    /// missing means 6, the original margin.
+    pub padding: Option<u32>,
+    /// Subject size as a percent of what fits inside the padding, 20 to 300;
+    /// 0 (missing) means 100.
+    pub subject_size: u32,
+    /// Subject position, -100 to 100 on each axis; 0 is centred and 100 moves
+    /// it half the canvas size to the right / down.
+    pub subject_x: i32,
+    pub subject_y: i32,
     /// Drop shadow strength, 0 (off) to 100.
     pub shadow: u8,
     /// Trim the empty space around the subject (ignored when a canvas size is set).
@@ -814,7 +841,7 @@ pub fn shape_cutout(rgba: RgbaImage, fx: &Effects) -> RgbaImage {
     adjust_colors(&mut rgba, fx.brightness, fx.contrast, fx.saturation);
     let canvas = fx.canvas();
     if let Some((cw, ch)) = canvas {
-        rgba = fit_to_canvas(&rgba, cw, ch);
+        rgba = fit_to_canvas(&rgba, cw, ch, fx);
     }
     if fx.outline > 0 {
         let color = parse_hex_color(&fx.outline_color).unwrap_or([255, 255, 255]);

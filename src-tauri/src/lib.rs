@@ -3,6 +3,8 @@ mod image_ops;
 mod gpu_detect;
 mod inference;
 mod memstat;
+mod models_dl;
+mod themes;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -179,8 +181,10 @@ fn results_dir(app: &tauri::AppHandle) -> Result<&'static PathBuf, AppError> {
 
 /// Resolve a specific model's file path. In production builds models live
 /// in the app's resource directory (see `bundle.resources` in
-/// tauri.conf.json); in `tauri dev` there is no bundle, so we fall back to
-/// the repo-relative `../models/` used during development.
+/// tauri.conf.json). The Lite installer only ships the Fast model, so a model
+/// the user downloaded (see models_dl.rs) is looked for next. In `tauri dev`
+/// there is no bundle, so we fall back to the repo-relative `../models/` used
+/// during development.
 fn resolve_model_path(app: &tauri::AppHandle, model: inference::ModelId) -> PathBuf {
     let filename = model.filename();
 
@@ -189,6 +193,10 @@ fn resolve_model_path(app: &tauri::AppHandle, model: inference::ModelId) -> Path
         if bundled.exists() {
             return bundled;
         }
+    }
+
+    if let Some(downloaded) = models_dl::downloaded_path(app, model) {
+        return downloaded;
     }
 
     // Development fallback: relative to src-tauri/ (the cargo working dir).
@@ -1422,7 +1430,15 @@ pub fn run() {
             delete_custom_model,
             set_gpu_mode,
             gpu_status,
-            check_for_updates
+            check_for_updates,
+            models_dl::bundled_models_status,
+            models_dl::download_model,
+            models_dl::cancel_model_download,
+            models_dl::delete_downloaded_model,
+            themes::import_theme_image,
+            themes::prune_theme_images,
+            themes::export_theme,
+            themes::import_theme
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

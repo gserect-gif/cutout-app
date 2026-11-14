@@ -5,7 +5,9 @@ name: Build installers
 # - Run it by hand: GitHub > Actions > "Build installers" > Run workflow.
 #   The installers show up as downloadable artifacts on the run page.
 # - Push a tag like v0.1.0 to also create a DRAFT GitHub Release with the
-#   installers attached.
+#   installers attached. On Windows that is the Full installer, the Lite
+#   installer (Fast model only) and the model files + manifest the Lite
+#   installer downloads from.
 #
 # macOS on Intel is not built: the prebuilt ONNX Runtime that the `ort` crate
 # downloads has no Intel-Mac version.
@@ -135,9 +137,109 @@ jobs:
           releaseDraft: true
           args: ${{ matrix.args }}
 
-      # The Linux GPU runtime must be built into the app. If the build left
-      # extra shared libraries beside it, the installer would not contain them
-      # and the app would fail to start, so stop here instead of shipping that.
+      # ---- Lite installer (Windows) ----
+      # The Lite installer is the same app with only the Fast model inside; the
+      # other models are downloaded from this release when the user asks (see
+      # models_dl.rs). It is built second, from a config that removes the three
+      # big models from the installer's resources. It has its own file name, and
+      # the Full installer is copied aside first and put back afterwards, because
+      # both builds write the same file name. If the Lite build fails, this job
+      # still ships the Full installer (continue-on-error) and prints why.
+      - name: Build the Lite installer (Windows)
+        id: lite
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nsis = "src-tauri/target/release/bundle/nsis"
+          $full = Get-ChildItem "$nsis/*.exe" | Select-Object -First 1
+          $keep = Join-Path $env:RUNNER_TEMP "full-installer"
+          New-Item -ItemType Directory -Force -Path $keep | Out-Null
+          Copy-Item $full.FullName $keep
+
+          # Same config as the Full build (DirectML.dll), plus: remove the three
+          # big models. A null value deletes a key when configs are merged.
+          $conf = Get-Content "src-tauri/tauri.directml.conf.json" -Raw | ConvertFrom-Json -AsHashtable
+          if (-not $conf.ContainsKey('bundle')) { $conf['bundle'] = @{} }
+          if (-not $conf['bundle'].ContainsKey('resources')) { $conf['bundle']['resources'] = @{} }
+          foreach ($m in 'model.onnx', 'model_fp16.onnx', 'isnet-general-use.onnx') {
+            $conf['bundle']['resources']["../models/$m"] = $null
+          }
+          $conf | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/tauri.lite.conf.json" -Encoding ascii
+          Get-Content "src-tauri/tauri.lite.conf.json"
+
+          npx tauri build --bundles nsis --config src-tauri/tauri.lite.conf.json
+          if ($LASTEXITCODE -ne 0) { throw "The Lite build failed." }
+
+          $built = Get-ChildItem "$nsis/*.exe" | Where-Object { $_.Name -eq $full.Name } | Select-Object -First 1
+          if (-not $built) { throw "The Lite installer was not found." }
+          # The Lite file must be far smaller. If it isn't, the models were not removed.
+          if ($built.Length -gt ($full.Length * 0.5)) {
+            throw "The Lite installer is as big as the Full one ($($built.Length) bytes), so the models were not removed."
+          }
+          $liteName = $full.Name -replace '-setup\.exe$', '-lite-setup.exe'
+          Move-Item $built.FullName (Join-Path $nsis $liteName) -Force
+          Write-Host "Lite installer: $liteName ($([math]::Round((Get-Item (Join-Path $nsis $liteName)).Length / 1MB)) MB)"
+
+      - name: Put the Full installer back (Windows)
+        if: always() && matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $nsis = "src-tauri/target/release/bundle/nsis"
+          $keep = Join-Path $env:RUNNER_TEMP "full-installer"
+          if (Test-Path $keep) { Copy-Item "$keep/*" $nsis -Force }
+          Get-ChildItem "$nsis/*.exe" | Format-Table Name, Length
+
+      - name: Add the Lite installer to the draft release (Windows)
+        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/') && steps.lite.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: src-tauri/target/release/bundle/nsis/*-lite-setup.exe
+
+      # The Lite installer downloads Balanced, Best and Best+ from this release.
+      # Publish them under clear names, with a manifest that lists each file's
+      # size and SHA-256 (the app checks the download against it).
+      - name: Publish the model files and manifest (Windows)
+        id: modelassets
+        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = "model-assets"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $map = @(
+            @{ key = 'fast';      file = 'u2netp.onnx' },
+            @{ key = 'balanced';  file = 'isnet-general-use.onnx' },
+            @{ key = 'best';      file = 'model.onnx' },
+            @{ key = 'best-plus'; file = 'model_fp16.onnx' }
+          )
+          $entries = @()
+          foreach ($m in $map) {
+            $asset = "cutout-model-$($m.key).onnx"
+            Copy-Item "models/$($m.file)" "$out/$asset"
+            $item = Get-Item "$out/$asset"
+            $hash = (Get-FileHash $item.FullName -Algorithm SHA256).Hash.ToLower()
+            $entries += [ordered]@{ key = $m.key; asset = $asset; size = $item.Length; sha256 = $hash }
+          }
+          @{ models = $entries } | ConvertTo-Json -Depth 5 | Set-Content "$out/models-manifest.json" -Encoding ascii
+          Get-Content "$out/models-manifest.json"
+
+      - name: Attach the model files to the draft release (Windows)
+        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/') && steps.modelassets.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: model-assets/*
+
+      # The Linux GPU runtime (WebGPU, experimental) must be built into the app.
+      # If the build left extra shared libraries beside it, the installer would
+      # not contain them and the app would fail to start, so stop here and list
+      # them instead of shipping that. (This is also where the earlier WebGPU
+      # AppImage problem will show up, if it is still there.)
       - name: Check the Linux build has no loose libraries
         if: matrix.os == 'ubuntu-24.04'
         shell: bash
@@ -170,6 +272,12 @@ jobs:
           chmod a+x squashfs-root/AppRun
           if [ -f squashfs-root/AppRun.wrapped ]; then chmod a+x squashfs-root/AppRun.wrapped; fi
           if [ -d squashfs-root/usr/bin ]; then find squashfs-root/usr/bin -type f -exec chmod a+x {} +; fi
+          # Remove the bundled libwayland libraries (client, egl, cursor, server).
+          # They come from the Ubuntu build runner and clash with the newer Mesa
+          # on current distros, so WebKit can't create its EGL display and the
+          # window stays blank (issue #1). The app then uses the system's copies.
+          # Found and fixed by Voicedrew11 (pull request #2).
+          find squashfs-root/usr/lib -maxdepth 1 -name 'libwayland-*' -print -delete
           wget -q -O appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           rm "$APPIMAGE"

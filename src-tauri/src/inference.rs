@@ -165,25 +165,33 @@ fn gpu_plan() -> GpuPlan {
         },
         // Automatic: only a dedicated card. Integrated graphics were slower
         // than the CPU in testing (80.9 s versus 22.1 s on a Ryzen's graphics).
-        _ => match best {
-            Some(card) => GpuPlan {
-                use_gpu: true,
-                device_index: Some(card.index),
-                card: Some(card.name.clone()),
-            },
-            None => none,
-        },
+        // On Linux the GPU support is experimental, so Auto never uses it:
+        // only the On switch does.
+        _ => {
+            if cfg!(target_os = "linux") {
+                return none;
+            }
+            match best {
+                Some(card) => GpuPlan {
+                    use_gpu: true,
+                    device_index: Some(card.index),
+                    card: Some(card.name.clone()),
+                },
+                None => none,
+            }
+        }
     }
 }
 
-/// The GPU technology Cutout uses on this operating system, if any. Linux has
-/// none in this version (a WebGPU build broke the AppImage packaging), so it
-/// runs on the CPU.
+/// The GPU technology Cutout uses on this operating system, if any: DirectML
+/// on Windows, CoreML on macOS and (experimental) WebGPU on Linux.
 pub fn gpu_technology() -> Option<&'static str> {
     if cfg!(target_os = "windows") {
         Some("DirectML")
     } else if cfg!(target_os = "macos") {
         Some("CoreML")
+    } else if cfg!(target_os = "linux") {
+        Some("WebGPU")
     } else {
         None
     }
@@ -207,7 +215,14 @@ fn gpu_provider(_device_index: Option<i32>) -> Option<ExecutionProviderDispatch>
     Some(ort::ep::CoreML::default().build().error_on_failure())
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(target_os = "linux")]
+fn gpu_provider(_device_index: Option<i32>) -> Option<ExecutionProviderDispatch> {
+    // Experimental. Needs working Vulkan drivers; without them the provider
+    // fails to start and Cutout carries on with the CPU.
+    Some(ort::ep::WebGPU::default().build().error_on_failure())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 fn gpu_provider(_device_index: Option<i32>) -> Option<ExecutionProviderDispatch> {
     None
 }
@@ -250,6 +265,9 @@ pub fn set_gpu_mode(mode: &str) {
 pub struct GpuStatus {
     /// The GPU technology for this OS, or None when there isn't one.
     pub technology: Option<&'static str>,
+    /// True when GPU support on this OS is experimental (Linux), so Auto
+    /// never uses it and only the On switch does.
+    pub experimental: bool,
     /// "auto", "on" or "off".
     pub mode: &'static str,
     /// Whether the next cutout will try the GPU.
@@ -266,6 +284,7 @@ pub fn gpu_status() -> GpuStatus {
     let plan = gpu_plan();
     GpuStatus {
         technology: gpu_technology(),
+        experimental: cfg!(target_os = "linux"),
         mode: match GPU_MODE.load(Ordering::SeqCst) {
             MODE_ON => "on",
             MODE_OFF => "off",
@@ -320,7 +339,7 @@ fn try_build_session(
 
     if on_gpu {
         // DirectML requires sequential execution and no memory-pattern
-        // planning; the other GPU providers don't mind.
+        // planning; the other GPU providers don't mind (it does no harm).
         builder = builder
             .with_memory_pattern(false)
             .map_err(load_err)?

@@ -13,6 +13,45 @@ https://github.com/user-attachments/assets/6aed57b8-a1c2-4c5d-8acc-17a72fbd23e2
 
 https://github.com/user-attachments/assets/6539456f-e150-4a4b-8e6d-6c7438f2d857
 
+## New in 2.2.0
+
+### Custom themes
+
+**Settings > Custom themes** lets you pick a built-in theme (Midnight Blue,
+Forest, Sunset, Paper, Rose), or press **Customize** to make your own:
+accent, background, panel and text colors, plus an optional background
+picture with blur, dimming and see-through panels, and a fit option (fill,
+fit inside or tile). Save a theme under a name, switch between saved themes,
+and **Export** / **Import** a theme as a single `.cutouttheme` file (the
+picture travels inside it). Pictures are copied into Cutout's own data folder.
+Picking Dark, Light or System switches a custom theme off again.
+
+### Subject position
+
+When a size preset is chosen (Export options > Size), a new **Subject
+position** section lets you change the subject's size, the padding around it,
+and move it left, right, up or down. You can also drag the cutout in the
+Result preview to move it.
+
+### Lite installer
+
+The release has two Windows installers. **Full** contains every model and
+works offline. **Lite** is much smaller and contains only the Fast model; the
+other models (Balanced, Best, Best+) are downloaded when you click Download in
+**Settings > Models** (or choose **More models...** in the model list). Each
+download is checked against a checksum before it is used, and you can remove
+it again. Cutout only goes online when you click Download.
+
+### Linux GPU acceleration (experimental)
+
+Linux can now use the GPU through WebGPU. It is experimental: **Auto still
+uses the CPU on Linux**, and you switch it on in Settings > GPU acceleration.
+It needs working Vulkan graphics drivers. If the GPU can't be used, Cutout
+falls back to the CPU.
+
+Also fixed: the Linux AppImage showed a blank window on newer distributions
+(Fedora 44 with a recent Mesa). Thanks to Voicedrew11 for finding the cause.
+
 ## New in 2.1.0
 
 ### GPU acceleration: Auto, On or Off
@@ -32,7 +71,8 @@ Windows uses DirectML, which works with NVIDIA, AMD and Intel graphics. We
 have only been able to test it on integrated graphics so far, not on a
 dedicated card. GPU support on macOS is experimental and untested; on Apple
 Silicon Macs the graphics are built into the chip, so Auto uses the CPU
-there. Linux uses the CPU in this version.
+there. Linux uses the CPU in this version (2.2.0 adds experimental Linux GPU
+support, see above).
 
 ![GPU acceleration set to Auto](docs/screenshot-gpu-auto.png)
 
@@ -104,7 +144,10 @@ You can also open an issue: https://github.com/gserect-gif/cutout-app/issues
   drag it straight out of the window into another app
 - Live preview: the Result pane shows every setting before you export
 - Remembers its window size and position
-- Zoom and pan the preview, Dark / Light / System theme
+- Zoom and pan the preview, Dark / Light / System theme, custom themes with
+  your own colors and background picture
+- Move and resize the subject on a size preset's canvas (or drag it)
+- Full and Lite Windows installers; Lite downloads the bigger models on demand
 - Cancel any run at any time (Esc works too)
 - GPU acceleration that picks itself: Auto uses a dedicated graphics card and
   skips integrated graphics, with manual On and Off
@@ -112,7 +155,9 @@ You can also open an issue: https://github.com/gserect-gif/cutout-app/issues
 
 ## Install (Windows)
 
-1. Download `Cutout_x.y.z_x64-setup.exe` from the Releases page.
+1. Download `Cutout_x.y.z_x64-setup.exe` (Full, works offline) or
+   `Cutout_x.y.z_x64-lite-setup.exe` (Lite, small, downloads models on
+   demand) from the Releases page.
 2. Run it.
 
 **Windows may show a blue "Windows protected your PC" (SmartScreen) warning.**
@@ -167,10 +212,12 @@ You are responsible for the license of any model you add.
 ## Privacy
 
 Cutout never connects to the internet to process images. Your pictures stay
-on your computer. The only time Cutout connects to anything is when you click
-**Check for updates** in Settings, which asks GitHub for the latest version
-number. (The Windows installer may download Microsoft's WebView2
-component if your PC doesn't already have it.)
+on your computer. The only times Cutout connects to anything are when you
+click **Check for updates** in Settings, which asks GitHub for the latest
+version number, and when you click **Download** for a model (Lite installer),
+which fetches it from this version's GitHub release. (The Windows installer
+may download Microsoft's WebView2 component if your PC doesn't already have
+it.)
 
 ## Troubleshooting
 
@@ -230,7 +277,7 @@ The macOS and Linux builds are new and have had less testing than Windows.
 `.github/workflows/build.yml` builds Windows, macOS and Linux installers on
 GitHub's servers. Run it from the Actions tab (**Build installers > Run
 workflow**) and download the installers from the run page, or push a tag such
-as `v2.1.0` to get a draft Release with all three attached.
+as `v2.2.0` to get a draft Release with all three attached.
 
 ## License
 

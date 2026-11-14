@@ -726,6 +726,10 @@ interface ExportOptions {
   blurBg: number; // blurred-photo background strength, 5 to 100
   customW: number; // width for the "custom" size, in pixels
   customH: number;
+  padding: number; // percent of the canvas kept free around the subject (size presets), 0-30
+  subjectSize: number; // subject size as a percent of what fits inside the padding, 20-200
+  subjectX: number; // -100 (left) to 100 (right), 0 = centred
+  subjectY: number; // -100 (up) to 100 (down), 0 = centred
 }
 
 interface Hsv {
@@ -803,6 +807,12 @@ const rotateBtn = document.getElementById("rotateBtn") as HTMLButtonElement;
 const customSizeRow = document.getElementById("customSizeRow") as HTMLElement;
 const customW = document.getElementById("customW") as HTMLInputElement;
 const customH = document.getElementById("customH") as HTMLInputElement;
+const subjectSection = document.getElementById("subjectSection") as HTMLElement;
+const subjectSizeSlider = document.getElementById("subjectSizeSlider") as HTMLInputElement;
+const paddingSlider = document.getElementById("paddingSlider") as HTMLInputElement;
+const subjectXSlider = document.getElementById("subjectXSlider") as HTMLInputElement;
+const subjectYSlider = document.getElementById("subjectYSlider") as HTMLInputElement;
+const subjectResetBtn = document.getElementById("subjectResetBtn") as HTMLButtonElement;
 const presetSelect = document.getElementById("presetSelect") as HTMLSelectElement;
 const presetName = document.getElementById("presetName") as HTMLInputElement;
 const presetSaveBtn = document.getElementById("presetSaveBtn") as HTMLButtonElement;
@@ -919,6 +929,10 @@ function loadExportOptions(): ExportOptions {
     blurBg: 50,
     customW: 1080,
     customH: 1080,
+    padding: 6,
+    subjectSize: 100,
+    subjectX: 0,
+    subjectY: 0,
   };
   try {
     const raw = window.localStorage.getItem(EXPORT_STORAGE_KEY);
@@ -955,6 +969,10 @@ function loadExportOptions(): ExportOptions {
       blurBg: clampInt(parsed.blurBg, 5, 100, 50),
       customW: clampInt(parsed.customW, 1, 10000, 1080),
       customH: clampInt(parsed.customH, 1, 10000, 1080),
+      padding: clampInt(parsed.padding, 0, 30, 6),
+      subjectSize: clampInt(parsed.subjectSize, 20, 200, 100),
+      subjectX: clampInt(parsed.subjectX, -100, 100, 0),
+      subjectY: clampInt(parsed.subjectY, -100, 100, 0),
     };
   } catch {
     return fallback;
@@ -991,6 +1009,10 @@ function effectParams() {
       defringe: exportOptions.defringe,
       canvasWidth,
       canvasHeight,
+      padding: exportOptions.padding,
+      subjectSize: exportOptions.subjectSize,
+      subjectX: exportOptions.subjectX,
+      subjectY: exportOptions.subjectY,
       shadow: exportOptions.shadow,
       autoCrop: exportOptions.autoCrop,
       brightness: exportOptions.brightness,
@@ -1108,6 +1130,14 @@ function updateExportUi(updateHexField = true) {
   customSizeRow.classList.toggle("hidden", exportOptions.size !== "custom");
   customW.value = String(exportOptions.customW);
   customH.value = String(exportOptions.customH);
+  // The subject position controls only make sense with a size preset.
+  const hasCanvas = exportOptions.size !== "original";
+  subjectSection.classList.toggle("hidden", !hasCanvas);
+  resultFrame.classList.toggle("subject-draggable", hasCanvas);
+  subjectSizeSlider.value = String(exportOptions.subjectSize);
+  paddingSlider.value = String(exportOptions.padding);
+  subjectXSlider.value = String(exportOptions.subjectX);
+  subjectYSlider.value = String(exportOptions.subjectY);
   brightnessSlider.value = String(exportOptions.brightness);
   contrastSlider.value = String(exportOptions.contrast);
   saturationSlider.value = String(exportOptions.saturation);
@@ -1311,7 +1341,9 @@ async function refreshResultPreview() {
         });
     // A newer request or a different image has taken over since this started.
     if (requestId !== edgeRequestId || currentResultPath !== path) return;
-    resultImg.src = `${convertFileSrc(shown)}?t=${Date.now()}`;
+    await showResultFile(shown);
+    // Clears the temporary shift used while dragging the subject.
+    applyZoom();
   } catch (err) {
     console.error("preview_edges failed:", err);
     showToast(readableError(err), true);
@@ -1714,6 +1746,78 @@ sizeSelect.addEventListener("change", () => {
   scheduleResultPreview();
 });
 
+// ----- Subject position: size, padding and position on the canvas -----
+
+for (const [slider, key] of [
+  [subjectSizeSlider, "subjectSize"],
+  [paddingSlider, "padding"],
+  [subjectXSlider, "subjectX"],
+  [subjectYSlider, "subjectY"],
+] as const) {
+  slider.addEventListener("input", () => {
+    exportOptions[key] = Number(slider.value);
+    saveExportOptions();
+    scheduleResultPreview();
+  });
+}
+
+subjectResetBtn.addEventListener("click", () => {
+  exportOptions.subjectSize = 100;
+  exportOptions.padding = 6;
+  exportOptions.subjectX = 0;
+  exportOptions.subjectY = 0;
+  saveExportOptions();
+  updateExportUi();
+  scheduleResultPreview();
+});
+
+// Drag the cutout in the Result preview to move it on the canvas. The image
+// follows the pointer right away (a temporary CSS shift); on release the real
+// preview is rebuilt with the new position.
+let subjectDrag: { startX: number; startY: number; baseX: number; baseY: number; width: number; height: number } | null =
+  null;
+
+resultImg.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || touchupActive || compareActive || zoom !== 1) return;
+  if (exportOptions.size === "original" || !currentResultPath || isProcessing) return;
+  e.preventDefault();
+  resultImg.setPointerCapture(e.pointerId);
+  subjectDrag = {
+    startX: e.clientX,
+    startY: e.clientY,
+    baseX: exportOptions.subjectX,
+    baseY: exportOptions.subjectY,
+    width: Math.max(1, resultImg.offsetWidth),
+    height: Math.max(1, resultImg.offsetHeight),
+  };
+});
+
+resultImg.addEventListener("pointermove", (e) => {
+  if (!subjectDrag || !resultImg.hasPointerCapture(e.pointerId)) return;
+  const d = subjectDrag;
+  // 100 on a slider is half the canvas, so a drag of half the shown width is 100.
+  const x = Math.max(-100, Math.min(100, Math.round(d.baseX + ((e.clientX - d.startX) / (d.width / 2)) * 100)));
+  const y = Math.max(-100, Math.min(100, Math.round(d.baseY + ((e.clientY - d.startY) / (d.height / 2)) * 100)));
+  exportOptions.subjectX = x;
+  exportOptions.subjectY = y;
+  subjectXSlider.value = String(x);
+  subjectYSlider.value = String(y);
+  const shiftX = ((x - d.baseX) / 100) * (d.width / 2);
+  const shiftY = ((y - d.baseY) / 100) * (d.height / 2);
+  resultImg.style.transform = `translate(${shiftX}px, ${shiftY}px)`;
+});
+
+function endSubjectDrag() {
+  if (!subjectDrag) return;
+  subjectDrag = null;
+  saveExportOptions();
+  void refreshResultPreview();
+}
+
+resultImg.addEventListener("pointerup", endSubjectDrag);
+resultImg.addEventListener("pointercancel", endSubjectDrag);
+// Stops the browser's own "drag the picture out" behavior from taking over.
+resultImg.addEventListener("dragstart", (e) => e.preventDefault());
 function toggleExportPopover() {
   const opening = exportPopover.classList.contains("hidden");
   exportPopover.classList.toggle("hidden", !opening);
@@ -2347,6 +2451,8 @@ themeToggle.addEventListener("click", (e) => {
   const choice = btn.dataset.themeChoice as ThemeChoice;
   applyTheme(choice);
   window.localStorage.setItem(THEME_STORAGE_KEY, choice);
+  // Picking Dark, Light or System switches a custom theme off.
+  if (activeTheme) leaveCustomTheme();
 });
 
 settingsBtn.addEventListener("click", () => {
@@ -2380,6 +2486,532 @@ for (const link of settingsOverlay.querySelectorAll<HTMLButtonElement>(".communi
   });
 }
 
+// ---------- Custom themes ----------
+// A theme is four colors (accent, background, panels, text), an optional
+// background picture (with blur, dim and see-through panels) and a name. The
+// other colors are worked out from those four. The working theme is kept in
+// localStorage; saved themes are a list there. Built-in themes ship with the
+// app. A theme can be exported to / imported from a .cutouttheme file, which
+// carries its picture inside.
+
+type ThemeBase = "dark" | "light";
+type ThemeFit = "cover" | "contain" | "tile";
+
+interface ThemeDef {
+  name: string;
+  base: ThemeBase; // which of Dark / Light the colors started from
+  accent: string;
+  background: string;
+  panel: string;
+  text: string;
+  image: string | null; // path of the picture in Cutout's own folder
+  fit: ThemeFit;
+  blur: number; // picture blur in pixels, 0-40
+  dim: number; // darkening of the picture in percent, 0-90
+  seeThrough: number; // how see-through the panels are over the picture, 0-80
+}
+
+const THEME_BASE_COLORS: Record<ThemeBase, Pick<ThemeDef, "accent" | "background" | "panel" | "text">> = {
+  dark: { accent: "#6c8cff", background: "#0f1115", panel: "#15181f", text: "#eef0f4" },
+  light: { accent: "#4f6fe0", background: "#f5f6f8", panel: "#ffffff", text: "#1a1d24" },
+};
+
+function builtinTheme(name: string, base: ThemeBase, accent: string, background: string, panel: string, text: string): ThemeDef {
+  return { name, base, accent, background, panel, text, image: null, fit: "cover", blur: 0, dim: 30, seeThrough: 20 };
+}
+
+const BUILTIN_THEMES: ThemeDef[] = [
+  builtinTheme("Midnight Blue", "dark", "#5b8cff", "#0b1020", "#121a30", "#e6ecff"),
+  builtinTheme("Forest", "dark", "#4cc38a", "#0d1512", "#14201b", "#e5f2ea"),
+  builtinTheme("Sunset", "dark", "#ff7a59", "#1a1114", "#251a1f", "#fbeee8"),
+  builtinTheme("Paper", "light", "#b5651d", "#f4efe6", "#fffaf0", "#2b2620"),
+  builtinTheme("Rose", "light", "#d6336c", "#fbf1f3", "#ffffff", "#3a1f27"),
+];
+
+const THEME_ACTIVE_KEY = "cutout-custom-theme";
+const THEMES_SAVED_KEY = "cutout-themes";
+const THEME_VAR_NAMES = [
+  "--bg-0",
+  "--bg-1",
+  "--bg-2",
+  "--bg-3",
+  "--border",
+  "--border-hover",
+  "--text-0",
+  "--text-1",
+  "--text-2",
+  "--accent",
+  "--accent-hover",
+  "--accent-dim",
+  "--on-accent",
+  "--panel",
+];
+
+const appBg = document.getElementById("appBg") as HTMLElement;
+const appBgImage = document.getElementById("appBgImage") as HTMLElement;
+const appBgDim = document.getElementById("appBgDim") as HTMLElement;
+const themeSelect = document.getElementById("themeSelect") as HTMLSelectElement;
+const themeEditBtn = document.getElementById("themeEditBtn") as HTMLButtonElement;
+const themeImportBtn = document.getElementById("themeImportBtn") as HTMLButtonElement;
+const themeExportBtn = document.getElementById("themeExportBtn") as HTMLButtonElement;
+const themeEditor = document.getElementById("themeEditor") as HTMLElement;
+const themeBaseToggle = document.getElementById("themeBaseToggle") as HTMLElement;
+const themeAccent = document.getElementById("themeAccent") as HTMLInputElement;
+const themeBackground = document.getElementById("themeBackground") as HTMLInputElement;
+const themePanel = document.getElementById("themePanel") as HTMLInputElement;
+const themeText = document.getElementById("themeText") as HTMLInputElement;
+const themeImageBtn = document.getElementById("themeImageBtn") as HTMLButtonElement;
+const themeImageRemoveBtn = document.getElementById("themeImageRemoveBtn") as HTMLButtonElement;
+const themeImageName = document.getElementById("themeImageName") as HTMLElement;
+const themeFit = document.getElementById("themeFit") as HTMLSelectElement;
+const themeBlur = document.getElementById("themeBlur") as HTMLInputElement;
+const themeDim = document.getElementById("themeDim") as HTMLInputElement;
+const themeSeeThrough = document.getElementById("themeSeeThrough") as HTMLInputElement;
+const themeName = document.getElementById("themeName") as HTMLInputElement;
+const themeSaveBtn = document.getElementById("themeSaveBtn") as HTMLButtonElement;
+const themeDeleteBtn = document.getElementById("themeDeleteBtn") as HTMLButtonElement;
+const themeResetBtn = document.getElementById("themeResetBtn") as HTMLButtonElement;
+
+/** The theme being shown, or null when plain Dark / Light / System is used. */
+let activeTheme: ThemeDef | null = null;
+/** What the theme list shows: "" (none), "b:<built-in name>", "s:<saved name>" or "__custom__" (edited, not saved). */
+let selectedThemeValue = "";
+let savedThemes: ThemeDef[] = [];
+
+// --- color math ---
+
+function hexToRgb(hex: string): [number, number, number] {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  const part = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+  return `#${part(r)}${part(g)}${part(b)}`;
+}
+
+/** `amount` of `b` mixed into `a` (0 = a, 1 = b). */
+function mixHex(a: string, b: string, amount: number): string {
+  const [ar, ag, ab] = hexToRgb(a);
+  const [br, bg, bb] = hexToRgb(b);
+  return rgbToHex(ar + (br - ar) * amount, ag + (bg - ag) * amount, ab + (bb - ab) * amount);
+}
+
+/** Perceived brightness, 0 (black) to 1 (white). */
+function brightnessOf(hex: string): number {
+  const [r, g, b] = hexToRgb(hex);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
+function rgbaOf(hex: string, alpha: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/** All the CSS variables a theme sets, worked out from its four colors. */
+function themeVariables(t: ThemeDef): Record<string, string> {
+  const bg2 = mixHex(t.panel, t.text, 0.06);
+  const accentHover = brightnessOf(t.background) < 0.5 ? mixHex(t.accent, "#ffffff", 0.15) : mixHex(t.accent, "#000000", 0.15);
+  return {
+    "--bg-0": t.background,
+    "--bg-1": t.panel,
+    "--bg-2": bg2,
+    "--bg-3": mixHex(t.panel, t.text, 0.12),
+    "--border": mixHex(t.panel, t.text, 0.14),
+    "--border-hover": mixHex(t.panel, t.text, 0.26),
+    "--text-0": t.text,
+    "--text-1": mixHex(t.text, t.panel, 0.25),
+    "--text-2": mixHex(t.text, t.panel, 0.5),
+    "--accent": t.accent,
+    "--accent-hover": accentHover,
+    "--accent-dim": rgbaOf(t.accent, 0.14),
+    "--on-accent": brightnessOf(t.accent) > 0.55 ? "#0b0e14" : "#ffffff",
+    "--panel": t.image ? rgbaOf(t.panel, 1 - t.seeThrough / 100) : t.panel,
+  };
+}
+
+function clearThemeVariables() {
+  for (const name of THEME_VAR_NAMES) document.documentElement.style.removeProperty(name);
+}
+
+/** Shows a theme on screen: its colors and its background picture. Pass null to go back to Dark / Light / System. */
+function applyCustomTheme(theme: ThemeDef | null) {
+  activeTheme = theme;
+  clearThemeVariables();
+
+  if (!theme) {
+    appBg.classList.add("hidden");
+    appBgImage.style.backgroundImage = "";
+    applyTheme(loadStoredTheme());
+    return;
+  }
+
+  document.documentElement.setAttribute("data-theme", theme.base);
+  for (const [name, value] of Object.entries(themeVariables(theme))) {
+    document.documentElement.style.setProperty(name, value);
+  }
+  // None of Dark / Light / System is in use while a custom theme is.
+  for (const btn of themeToggle.querySelectorAll<HTMLButtonElement>(".theme-option")) {
+    btn.classList.remove("active");
+  }
+
+  if (theme.image) {
+    appBg.classList.remove("hidden");
+    // The blur is drawn a little past the window edges so they don't fade out.
+    appBgImage.style.inset = theme.blur > 0 ? `${-theme.blur * 2}px` : "0";
+    appBgImage.style.filter = theme.blur > 0 ? `blur(${theme.blur}px)` : "none";
+    appBgImage.style.backgroundImage = `url("${convertFileSrc(theme.image)}")`;
+    appBgImage.style.backgroundSize = theme.fit === "tile" ? "auto" : theme.fit;
+    appBgImage.style.backgroundRepeat = theme.fit === "tile" ? "repeat" : "no-repeat";
+    appBgDim.style.opacity = String(theme.dim / 100);
+  } else {
+    appBg.classList.add("hidden");
+    appBgImage.style.backgroundImage = "";
+  }
+}
+
+/** Cleans up anything read from storage or from an imported file. */
+function normalizeThemeHex(value: unknown): string | null {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value.trim()) ? value.trim().toLowerCase() : null;
+}
+
+function themeFileName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
+/** Cleans up anything read from storage or from an imported file. */
+function sanitizeTheme(raw: any, fallbackName = "My theme"): ThemeDef | null {
+  if (!raw || typeof raw !== "object") return null;
+  const base: ThemeBase = raw.base === "light" ? "light" : "dark";
+  const defaults = THEME_BASE_COLORS[base];
+  const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim().slice(0, 40) : fallbackName;
+  return {
+    name,
+    base,
+    accent: normalizeThemeHex(raw.accent) ?? defaults.accent,
+    background: normalizeThemeHex(raw.background) ?? defaults.background,
+    panel: normalizeThemeHex(raw.panel) ?? defaults.panel,
+    text: normalizeThemeHex(raw.text) ?? defaults.text,
+    image: typeof raw.image === "string" && raw.image ? raw.image : null,
+    fit: raw.fit === "contain" || raw.fit === "tile" ? raw.fit : "cover",
+    blur: clampInt(raw.blur, 0, 40, 0),
+    dim: clampInt(raw.dim, 0, 90, 30),
+    seeThrough: clampInt(raw.seeThrough, 0, 80, 20),
+  };
+}
+
+function cloneTheme(t: ThemeDef): ThemeDef {
+  return { ...t };
+}
+
+/** The Dark or Light theme that matches what is on screen now, as a starting point for editing. */
+function defaultThemeForCurrentBase(): ThemeDef {
+  const choice = loadStoredTheme();
+  const light = choice === "light" || (choice === "system" && window.matchMedia("(prefers-color-scheme: light)").matches);
+  const base: ThemeBase = light ? "light" : "dark";
+  return { name: "My theme", base, ...THEME_BASE_COLORS[base], image: null, fit: "cover", blur: 0, dim: 30, seeThrough: 20 };
+}
+
+function loadSavedThemes(): ThemeDef[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(THEMES_SAVED_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((t) => sanitizeTheme(t)).filter((t): t is ThemeDef => t !== null);
+  } catch {
+    return [];
+  }
+}
+
+function storeSavedThemes() {
+  try {
+    window.localStorage.setItem(THEMES_SAVED_KEY, JSON.stringify(savedThemes));
+  } catch (err) {
+    console.warn("couldn't save themes:", err);
+  }
+}
+
+function persistActiveTheme() {
+  try {
+    if (activeTheme) {
+      window.localStorage.setItem(THEME_ACTIVE_KEY, JSON.stringify({ theme: activeTheme, selected: selectedThemeValue }));
+    } else {
+      window.localStorage.removeItem(THEME_ACTIVE_KEY);
+    }
+  } catch (err) {
+    console.warn("couldn't save the theme:", err);
+  }
+}
+
+/** Deletes picture files that no theme uses any more. */
+function pruneThemeImages() {
+  const keep = [activeTheme?.image, ...savedThemes.map((t) => t.image)].filter((p): p is string => !!p);
+  void invoke("prune_theme_images", { keep }).catch((err) => console.warn("prune_theme_images failed:", err));
+}
+
+function renderThemeSelect() {
+  themeSelect.innerHTML = "";
+  const add = (parent: Node, value: string, label: string) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    parent.appendChild(opt);
+  };
+  add(themeSelect, "", "Default (Dark / Light / System)");
+  if (selectedThemeValue === "__custom__") add(themeSelect, "__custom__", "Custom (not saved)");
+
+  const builtIn = document.createElement("optgroup");
+  builtIn.label = "Built-in";
+  for (const t of BUILTIN_THEMES) add(builtIn, `b:${t.name}`, t.name);
+  themeSelect.appendChild(builtIn);
+
+  if (savedThemes.length > 0) {
+    const saved = document.createElement("optgroup");
+    saved.label = "Saved";
+    for (const t of savedThemes) add(saved, `s:${t.name}`, t.name);
+    themeSelect.appendChild(saved);
+  }
+  themeSelect.value = selectedThemeValue;
+  if (themeSelect.value !== selectedThemeValue) themeSelect.value = "";
+}
+
+/** Puts the working theme's values into the editor controls. */
+function fillThemeEditor() {
+  const t = activeTheme ?? defaultThemeForCurrentBase();
+  themeAccent.value = t.accent;
+  themeBackground.value = t.background;
+  themePanel.value = t.panel;
+  themeText.value = t.text;
+  for (const btn of themeBaseToggle.querySelectorAll<HTMLButtonElement>(".theme-option")) {
+    btn.classList.toggle("active", btn.dataset.base === t.base);
+  }
+  themeImageName.textContent = t.image ? themeFileName(t.image) : "No picture";
+  themeFit.value = t.fit;
+  themeBlur.value = String(t.blur);
+  themeDim.value = String(t.dim);
+  themeSeeThrough.value = String(t.seeThrough);
+  if (document.activeElement !== themeName) {
+    themeName.value = selectedThemeValue.startsWith("s:") ? t.name : "";
+  }
+  themeDeleteBtn.disabled = !selectedThemeValue.startsWith("s:");
+  themeExportBtn.disabled = false;
+}
+
+/** Applies a change to the working theme (creating it from Dark or Light on the first edit) and shows it right away. */
+function editTheme(change: (t: ThemeDef) => void) {
+  const working = activeTheme ?? defaultThemeForCurrentBase();
+  const previousImage = working.image;
+  change(working);
+  if (selectedThemeValue === "" || selectedThemeValue.startsWith("b:")) selectedThemeValue = "__custom__";
+  applyCustomTheme(working);
+  persistActiveTheme();
+  renderThemeSelect();
+  fillThemeEditor();
+  if (working.image !== previousImage) pruneThemeImages();
+}
+
+/** Switches a custom theme off, back to plain Dark / Light / System. */
+function leaveCustomTheme() {
+  selectedThemeValue = "";
+  applyCustomTheme(null);
+  persistActiveTheme();
+  renderThemeSelect();
+  fillThemeEditor();
+  pruneThemeImages();
+}
+
+/** Makes a theme the working theme (picked from the list, or just imported). */
+function useTheme(theme: ThemeDef, selectedValue: string) {
+  selectedThemeValue = selectedValue;
+  applyCustomTheme(cloneTheme(theme));
+  persistActiveTheme();
+  renderThemeSelect();
+  fillThemeEditor();
+  pruneThemeImages();
+}
+
+themeSelect.addEventListener("change", () => {
+  const value = themeSelect.value;
+  if (value === "") {
+    leaveCustomTheme();
+  } else if (value === "__custom__") {
+    // Already the working theme.
+  } else if (value.startsWith("b:")) {
+    const theme = BUILTIN_THEMES.find((t) => `b:${t.name}` === value);
+    if (theme) useTheme(theme, value);
+  } else if (value.startsWith("s:")) {
+    const theme = savedThemes.find((t) => `s:${t.name}` === value);
+    if (theme) useTheme(theme, value);
+  }
+});
+
+themeEditBtn.addEventListener("click", () => {
+  themeEditor.classList.toggle("hidden");
+  fillThemeEditor();
+});
+
+themeBaseToggle.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".theme-option");
+  const base = btn?.dataset.base;
+  if (base !== "dark" && base !== "light") return;
+  editTheme((t) => {
+    t.base = base;
+    Object.assign(t, THEME_BASE_COLORS[base]);
+  });
+});
+
+for (const [input, key] of [
+  [themeAccent, "accent"],
+  [themeBackground, "background"],
+  [themePanel, "panel"],
+  [themeText, "text"],
+] as const) {
+  input.addEventListener("input", () => {
+    const hex = normalizeThemeHex(input.value);
+    if (hex) editTheme((t) => (t[key] = hex));
+  });
+}
+
+for (const [slider, key] of [
+  [themeBlur, "blur"],
+  [themeDim, "dim"],
+  [themeSeeThrough, "seeThrough"],
+] as const) {
+  slider.addEventListener("input", () => editTheme((t) => (t[key] = Number(slider.value))));
+}
+
+themeFit.addEventListener("change", () => {
+  const fit = themeFit.value;
+  if (fit === "cover" || fit === "contain" || fit === "tile") editTheme((t) => (t.fit = fit));
+});
+
+themeImageBtn.addEventListener("click", async () => {
+  try {
+    const selected = await open({
+      multiple: false,
+      title: "Choose a background picture",
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "gif"] }],
+    });
+    if (typeof selected !== "string") return;
+    const stored = await invoke<string>("import_theme_image", { sourcePath: selected });
+    editTheme((t) => (t.image = stored));
+  } catch (err) {
+    console.error("import_theme_image failed:", err);
+    showToast(readableError(err), true);
+  }
+});
+
+themeImageRemoveBtn.addEventListener("click", () => {
+  if (activeTheme?.image) editTheme((t) => (t.image = null));
+});
+
+themeResetBtn.addEventListener("click", () => {
+  const base = activeTheme?.base ?? defaultThemeForCurrentBase().base;
+  editTheme((t) => {
+    t.base = base;
+    Object.assign(t, THEME_BASE_COLORS[base]);
+    t.image = null;
+    t.fit = "cover";
+    t.blur = 0;
+    t.dim = 30;
+    t.seeThrough = 20;
+  });
+});
+
+themeSaveBtn.addEventListener("click", () => {
+  const name = themeName.value.trim().slice(0, 40);
+  if (!name) {
+    showToast("Type a name for the theme first.", true);
+    return;
+  }
+  if (BUILTIN_THEMES.some((t) => t.name.toLowerCase() === name.toLowerCase())) {
+    showToast("That name belongs to a built-in theme. Pick another one.", true);
+    return;
+  }
+  const working = activeTheme ?? defaultThemeForCurrentBase();
+  const toSave: ThemeDef = { ...cloneTheme(working), name };
+  savedThemes = savedThemes.filter((t) => t.name.toLowerCase() !== name.toLowerCase());
+  savedThemes.push(toSave);
+  storeSavedThemes();
+  useTheme(toSave, `s:${name}`);
+  showToast(`Saved theme "${name}".`);
+});
+
+themeDeleteBtn.addEventListener("click", () => {
+  if (!selectedThemeValue.startsWith("s:")) return;
+  const name = selectedThemeValue.slice(2);
+  savedThemes = savedThemes.filter((t) => t.name !== name);
+  storeSavedThemes();
+  leaveCustomTheme();
+  showToast(`Deleted theme "${name}".`);
+});
+
+themeExportBtn.addEventListener("click", async () => {
+  const theme = activeTheme ?? defaultThemeForCurrentBase();
+  try {
+    const destination = await save({
+      defaultPath: `${theme.name}.cutouttheme`,
+      filters: [{ name: "Cutout theme", extensions: ["cutouttheme"] }],
+    });
+    if (!destination) return;
+    await invoke("export_theme", {
+      destination,
+      themeJson: JSON.stringify(theme),
+      imagePath: theme.image,
+    });
+    showToast("Theme exported.");
+  } catch (err) {
+    console.error("export_theme failed:", err);
+    showToast(readableError(err), true);
+  }
+});
+
+themeImportBtn.addEventListener("click", async () => {
+  try {
+    const selected = await open({
+      multiple: false,
+      title: "Import a theme",
+      filters: [{ name: "Cutout theme", extensions: ["cutouttheme"] }],
+    });
+    if (typeof selected !== "string") return;
+    const text = await invoke<string>("import_theme", { sourcePath: selected });
+    const theme = sanitizeTheme(JSON.parse(text), "Imported theme");
+    if (!theme) throw "That isn't a Cutout theme file.";
+
+    // Never overwrite a built-in or saved theme by accident: pick a free name.
+    const taken = (n: string) =>
+      BUILTIN_THEMES.some((t) => t.name.toLowerCase() === n.toLowerCase()) ||
+      savedThemes.some((t) => t.name.toLowerCase() === n.toLowerCase());
+    const baseName = theme.name;
+    let counter = 2;
+    while (taken(theme.name)) theme.name = `${baseName.slice(0, 34)} (${counter++})`;
+
+    savedThemes.push(theme);
+    storeSavedThemes();
+    useTheme(theme, `s:${theme.name}`);
+    showToast(`Imported theme "${theme.name}".`);
+  } catch (err) {
+    console.error("import_theme failed:", err);
+    showToast(readableError(err), true);
+  }
+});
+
+/** Restores the saved themes and the theme that was on screen last time. */
+function initCustomThemes() {
+  savedThemes = loadSavedThemes();
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(THEME_ACTIVE_KEY) ?? "null");
+    const theme = stored ? sanitizeTheme(stored.theme) : null;
+    if (theme) {
+      selectedThemeValue = typeof stored.selected === "string" ? stored.selected : "__custom__";
+      applyCustomTheme(theme);
+    }
+  } catch (err) {
+    console.warn("couldn't restore the theme:", err);
+  }
+  renderThemeSelect();
+  fillThemeEditor();
+  pruneThemeImages();
+}
+
 // ---------- GPU acceleration ----------
 
 interface GpuAdapterInfo {
@@ -2390,6 +3022,7 @@ interface GpuAdapterInfo {
 
 interface GpuStatus {
   technology: string | null; // the GPU technology for this OS, null when there isn't one
+  experimental: boolean; // true on Linux: Auto never uses the GPU there, only On does
   mode: "auto" | "on" | "off";
   usingGpu: boolean; // whether the next cutout will try the GPU
   card: string | null; // the graphics card that will be used
@@ -2402,6 +3035,7 @@ type GpuMode = "auto" | "on" | "off";
 const GPU_STORAGE_KEY = "cutout-gpu-mode";
 const gpuToggle = document.getElementById("gpuToggle") as HTMLElement;
 const gpuStatusText = document.getElementById("gpuStatusText") as HTMLElement;
+const gpuExperimentalNote = document.getElementById("gpuExperimentalNote") as HTMLElement;
 let gpuMode: GpuMode = (() => {
   const saved = window.localStorage.getItem(GPU_STORAGE_KEY);
   return saved === "on" || saved === "off" ? saved : "auto";
@@ -2413,11 +3047,14 @@ async function refreshGpuStatus() {
   }
   try {
     const s = await invoke<GpuStatus>("gpu_status");
+    gpuExperimentalNote.classList.toggle("hidden", !s.experimental);
     let text: string;
     if (!s.technology) {
       text = "GPU acceleration isn't available on this system, so Cutout uses the CPU.";
     } else if (s.mode === "off") {
       text = "Off: Cutout uses the CPU.";
+    } else if (s.mode === "auto" && s.experimental) {
+      text = "Auto: Cutout uses the CPU. GPU acceleration on Linux is experimental, so only On uses it.";
     } else if (s.mode === "auto") {
       if (s.usingGpu && s.card) {
         text = `Auto: using your graphics card (${s.card}).`;
@@ -2428,9 +3065,9 @@ async function refreshGpuStatus() {
         text = "Auto: no graphics card was detected, so the CPU is used.";
       }
     } else if (s.card) {
-      text = `On: using ${s.card} (${s.technology}).`;
+      text = `On${s.experimental ? " (experimental)" : ""}: using ${s.card} (${s.technology}).`;
     } else {
-      text = `On (${s.technology}): using your graphics. Integrated graphics can be slower than the CPU.`;
+      text = `On${s.experimental ? " (experimental)" : ""} (${s.technology}): using your graphics. Integrated graphics can be slower than the CPU.`;
     }
     if (s.usingGpu && s.lastBackend === "CPU") {
       text += " The last cutout ran on the CPU because the GPU couldn't be used.";
@@ -2519,6 +3156,8 @@ const MODEL_STORAGE_KEY = "cutout-model";
 // removing a custom model, so the listeners must only be added once).
 let modelOptions: ModelAvailability[] = [];
 let modelListenersAttached = false;
+const MORE_MODELS_KEY = "__more__"; // last picker entry: opens Settings > Models
+let currentModelKey = "best"; // the real model picked last (never MORE_MODELS_KEY)
 
 function setModelSelectsLoading(loading: boolean) {
   for (const select of [modelSelect, batchModelSelect]) {
@@ -2555,6 +3194,18 @@ async function initModelPicker() {
       ? "best"
       : options[0].key;
 
+  currentModelKey = selected;
+
+  // With the Lite installer some bundled models aren't on this computer yet.
+  // The picker then ends with "More models...", which opens Settings > Models.
+  let someMissing = false;
+  try {
+    const status = await invoke<BundledModelStatus[]>("bundled_models_status");
+    someMissing = status.some((s) => !s.installed);
+  } catch (err) {
+    console.warn("bundled_models_status failed:", err);
+  }
+
   for (const select of [modelSelect, batchModelSelect]) {
     select.disabled = false;
     select.innerHTML = "";
@@ -2565,6 +3216,13 @@ async function initModelPicker() {
       const sizeNote = m.sizeMb != null ? ` (${m.sizeMb} MB)` : "";
       opt.title = `${m.description}${sizeNote}`;
       select.appendChild(opt);
+    }
+    if (someMissing) {
+      const more = document.createElement("option");
+      more.value = MORE_MODELS_KEY;
+      more.textContent = "More models\u2026";
+      more.title = "Download the other models (Balanced, Best, Best+)";
+      select.appendChild(more);
     }
     select.value = selected;
     // <select> itself doesn't reliably show the selected <option>'s title as
@@ -2577,6 +3235,14 @@ async function initModelPicker() {
   if (!modelListenersAttached) {
     modelListenersAttached = true;
     const onChange = (source: HTMLSelectElement) => {
+      if (source.value === MORE_MODELS_KEY) {
+        // Not a model: put the real choice back and show where to get more.
+        modelSelect.value = currentModelKey;
+        batchModelSelect.value = currentModelKey;
+        openSettingsAtModels();
+        return;
+      }
+      currentModelKey = source.value;
       modelSelect.value = source.value;
       batchModelSelect.value = source.value;
       const desc = modelOptions.find((m) => m.key === source.value)?.description ?? "";
@@ -2587,6 +3253,166 @@ async function initModelPicker() {
     modelSelect.addEventListener("change", () => onChange(modelSelect));
     batchModelSelect.addEventListener("change", () => onChange(batchModelSelect));
   }
+}
+
+// ---------- Model downloads (Lite installer) ----------
+// The Lite installer ships only the Fast model. The others are downloaded
+// from this version's GitHub release when the user clicks Download.
+
+interface BundledModelStatus {
+  key: string;
+  installed: boolean; // the file is on this computer
+  downloaded: boolean; // ...and it is a download, so it can be removed again
+}
+
+interface ModelDownloadProgress {
+  key: string;
+  phase: "starting" | "downloading" | "verifying" | "done";
+  downloaded: number;
+  total: number;
+}
+
+const modelsSection = document.getElementById("modelsSection") as HTMLElement;
+const modelDownloadList = document.getElementById("modelDownloadList") as HTMLElement;
+let bundledStatus: BundledModelStatus[] = [];
+let downloadingKey: string | null = null;
+let downloadProgress: ModelDownloadProgress | null = null;
+let downloadMessage: { key: string; text: string; isError: boolean } | null = null;
+
+function megabytes(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1);
+}
+
+function renderModelDownloads() {
+  // A Full install has every model and nothing downloaded: nothing to show.
+  const nothingToDo = bundledStatus.every((s) => s.installed && !s.downloaded) && !downloadingKey;
+  modelsSection.classList.toggle("hidden", bundledStatus.length === 0 || nothingToDo);
+
+  modelDownloadList.innerHTML = "";
+  for (const s of bundledStatus) {
+    const row = document.createElement("div");
+    row.className = "model-dl-row";
+
+    const top = document.createElement("div");
+    top.className = "model-dl-top";
+    const name = document.createElement("span");
+    name.textContent = MODEL_NAMES[s.key] ?? s.key;
+    const actions = document.createElement("div");
+    actions.className = "model-dl-actions";
+
+    const status = document.createElement("div");
+    status.className = "model-dl-status";
+
+    if (downloadingKey === s.key) {
+      const cancel = document.createElement("button");
+      cancel.className = "edge-reset";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => void invoke("cancel_model_download"));
+      actions.appendChild(cancel);
+
+      const p = downloadProgress;
+      const bar = document.createElement("div");
+      bar.className = "model-progress";
+      const fill = document.createElement("div");
+      fill.className = "model-progress-bar";
+      const percent = p && p.total > 0 ? Math.min(100, (p.downloaded / p.total) * 100) : 0;
+      fill.style.width = `${percent}%`;
+      bar.appendChild(fill);
+
+      status.textContent =
+        !p || p.phase === "starting"
+          ? "Connecting..."
+          : p.phase === "verifying"
+            ? "Checking the file..."
+            : `${megabytes(p.downloaded)} of ${megabytes(p.total)} MB`;
+      top.append(name, actions);
+      row.append(top, bar, status);
+    } else {
+      if (!s.installed) {
+        const get = document.createElement("button");
+        get.className = "edge-reset";
+        get.textContent = downloadMessage?.key === s.key && downloadMessage.isError ? "Retry" : "Download";
+        get.disabled = downloadingKey !== null;
+        get.addEventListener("click", () => void startModelDownload(s.key));
+        actions.appendChild(get);
+        status.textContent = "Not installed";
+      } else if (s.downloaded) {
+        const remove = document.createElement("button");
+        remove.className = "edge-reset";
+        remove.textContent = "Remove";
+        remove.disabled = downloadingKey !== null;
+        remove.addEventListener("click", async () => {
+          try {
+            await invoke("delete_downloaded_model", { key: s.key });
+            await refreshModelDownloads();
+          } catch (err) {
+            showToast(readableError(err), true);
+          }
+        });
+        actions.appendChild(remove);
+        status.textContent = "Downloaded";
+      } else {
+        status.textContent = "Installed";
+      }
+      if (downloadMessage?.key === s.key) {
+        status.textContent = downloadMessage.text;
+        status.classList.toggle("error", downloadMessage.isError);
+      }
+      top.append(name, actions);
+      row.append(top, status);
+    }
+    modelDownloadList.appendChild(row);
+  }
+}
+
+/** Reads which bundled models are on this computer and redraws the list. */
+async function refreshModelDownloads(rebuildPicker = true) {
+  try {
+    bundledStatus = await invoke<BundledModelStatus[]>("bundled_models_status");
+  } catch (err) {
+    console.warn("bundled_models_status failed:", err);
+    bundledStatus = [];
+  }
+  renderModelDownloads();
+  if (rebuildPicker) await initModelPicker();
+}
+
+async function startModelDownload(key: string) {
+  if (downloadingKey) return;
+  downloadingKey = key;
+  downloadMessage = null;
+  downloadProgress = { key, phase: "starting", downloaded: 0, total: 0 };
+  renderModelDownloads();
+  try {
+    await invoke("download_model", { key });
+    downloadMessage = null;
+    showToast(`${MODEL_NAMES[key] ?? key} is ready to use.`);
+  } catch (err) {
+    const message = readableError(err);
+    downloadMessage =
+      message === "Cancelled."
+        ? { key, text: "Download cancelled.", isError: false }
+        : { key, text: message, isError: true };
+    if (message !== "Cancelled.") console.error("download_model failed:", err);
+  } finally {
+    downloadingKey = null;
+    downloadProgress = null;
+    await refreshModelDownloads();
+  }
+}
+
+listen<ModelDownloadProgress>("model-download-progress", (event) => {
+  if (event.payload.key !== downloadingKey) return;
+  downloadProgress = event.payload;
+  renderModelDownloads();
+});
+
+/** Opens Settings and scrolls to the Models section (the "More models..." entry in the picker). */
+function openSettingsAtModels() {
+  settingsOverlay.classList.remove("hidden");
+  void refreshGpuStatus();
+  void refreshModelDownloads(false);
+  window.setTimeout(() => modelsSection.scrollIntoView({ block: "center" }), 50);
 }
 
 // ---------- Preview zoom & pan ----------
@@ -2693,6 +3519,7 @@ zoomResetBtn.addEventListener("click", () => resetZoom());
 applyTheme(loadStoredTheme());
 resetWorkspace();
 updateExportUi();
+initCustomThemes();
 
 // Show the app version in Settings. If it can't be read, the line stays hidden.
 getVersion()
@@ -2704,6 +3531,7 @@ getVersion()
 void initModelPicker();
 void refreshCustomModels();
 renderPresetSelect();
+void refreshModelDownloads(false);
 
 // Tell the backend whether GPU acceleration is allowed before the first cutout.
 invoke("set_gpu_mode", { mode: gpuMode })

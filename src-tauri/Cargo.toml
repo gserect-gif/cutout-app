@@ -1,6 +1,6 @@
 [package]
 name = "bgremover"
-version = "2.1.0"
+version = "2.2.0"
 description = "Local, offline background removal utility"
 edition = "2021"
 rust-version = "1.77"
@@ -30,14 +30,21 @@ image = { version = "0.25", features = ["png", "jpeg", "webp"] }
 # ONNX Runtime inference
 ort = { version = "2.0.0-rc.13" }
 
-# Update check (Settings > Check for updates). It only connects to GitHub when
-# that button is clicked; Cutout never connects by itself.
+# Update check and model downloads. Cutout only connects to the internet when
+# the user clicks Check for updates in Settings, or Download for a model
+# (Lite installer); it never connects by itself.
 ureq = "3"
+# Checks a downloaded model file against the SHA-256 published with the release.
+sha2 = "0.10"
+# Theme files carry their background image inside, encoded as base64 text.
+base64 = "0.22"
 
 # GPU acceleration: each OS gets its own provider, which makes the build link a
 # ONNX Runtime that includes it. If the GPU can't be used when the app runs,
-# Cutout falls back to the CPU on its own. Linux has none in this version: a
-# WebGPU build broke the AppImage packaging.
+# Cutout falls back to the CPU on its own. Linux uses WebGPU, which is
+# experimental: Auto mode never picks it, only the On switch does.
+[target.'cfg(target_os = "linux")'.dependencies]
+ort = { version = "2.0.0-rc.13", features = ["webgpu"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { version = "2.0.0-rc.13", features = ["directml"] }
 # Lists the graphics adapters so Auto GPU mode can tell a dedicated card from integrated graphics.

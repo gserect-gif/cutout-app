@@ -332,12 +332,14 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bgremover"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
+ "base64 0.22.1",
  "image",
  "ort",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

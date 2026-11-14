@@ -7,6 +7,11 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
+    <!-- Optional background picture of a custom theme (see themes in main.ts). -->
+    <div id="appBg" class="app-bg hidden" aria-hidden="true">
+      <div id="appBgImage" class="app-bg-image"></div>
+      <div id="appBgDim" class="app-bg-dim"></div>
+    </div>
     <div class="titlebar" data-tauri-drag-region>
       <div class="titlebar-title" data-tauri-drag-region>
         <img class="logo" src="/src/assets/logo.png" width="18" height="18" alt="" />
@@ -34,6 +39,51 @@
         </div>
         <p class="settings-hint">Cutout runs entirely on this device. No images or data ever leave your computer.</p>
         <div class="settings-section">
+          <span class="settings-section-title">Custom themes</span>
+          <select id="themeSelect" class="model-select size-select" aria-label="Custom theme"></select>
+          <div class="image-picker">
+            <button id="themeEditBtn" class="btn btn-ghost btn-small">Customize&hellip;</button>
+            <button id="themeImportBtn" class="btn btn-ghost btn-small">Import&hellip;</button>
+            <button id="themeExportBtn" class="btn btn-ghost btn-small">Export&hellip;</button>
+          </div>
+          <div id="themeEditor" class="theme-editor hidden">
+            <div class="theme-toggle" id="themeBaseToggle">
+              <button class="theme-option" data-base="dark">Start from Dark</button>
+              <button class="theme-option" data-base="light">Start from Light</button>
+            </div>
+            <label class="theme-color-row"><span>Accent</span><input type="color" id="themeAccent" class="color-input" /></label>
+            <label class="theme-color-row"><span>Background</span><input type="color" id="themeBackground" class="color-input" /></label>
+            <label class="theme-color-row"><span>Panels</span><input type="color" id="themePanel" class="color-input" /></label>
+            <label class="theme-color-row"><span>Text</span><input type="color" id="themeText" class="color-input" /></label>
+            <span class="settings-section-title">Background picture</span>
+            <div class="image-picker">
+              <button id="themeImageBtn" class="btn btn-ghost btn-small">Choose picture&hellip;</button>
+              <button id="themeImageRemoveBtn" class="btn btn-ghost btn-small">Remove</button>
+            </div>
+            <span id="themeImageName" class="bg-image-name">No picture</span>
+            <select id="themeFit" class="model-select size-select" aria-label="How the picture fits">
+              <option value="cover">Fill the window (cover)</option>
+              <option value="contain">Fit inside the window (contain)</option>
+              <option value="tile">Tile</option>
+            </select>
+            <input type="range" id="themeBlur" class="edge-slider" min="0" max="40" step="1" value="0" aria-label="Picture blur" />
+            <div class="edge-labels"><span>Blur</span></div>
+            <input type="range" id="themeDim" class="edge-slider" min="0" max="90" step="1" value="30" aria-label="Picture dimming" />
+            <div class="edge-labels"><span>Dim the picture</span></div>
+            <input type="range" id="themeSeeThrough" class="edge-slider" min="0" max="80" step="1" value="20" aria-label="Panel see-through" />
+            <div class="edge-labels"><span>Panels see-through</span></div>
+            <div class="image-picker">
+              <input id="themeName" class="text-input" type="text" maxlength="40" placeholder="Name this theme" aria-label="Theme name" />
+              <button id="themeSaveBtn" class="btn btn-ghost btn-small">Save</button>
+            </div>
+            <div class="image-picker">
+              <button id="themeDeleteBtn" class="btn btn-ghost btn-small">Delete saved theme</button>
+              <button id="themeResetBtn" class="btn btn-ghost btn-small">Reset</button>
+            </div>
+          </div>
+          <p class="settings-hint" style="margin: 0">Pick a built-in or saved theme, or choose Customize to make your own. Pictures are copied into Cutout's own folder, and everything stays offline.</p>
+        </div>
+        <div class="settings-section">
           <span class="settings-section-title">Community</span>
           <div class="community-links">
             <button class="community-link" data-url="https://discord.gg/BZK6sst4KX">
@@ -60,6 +110,12 @@
           </div>
           <p class="settings-hint" id="gpuStatusText" style="margin: 0"></p>
           <p class="settings-hint" style="margin: 0">Auto (recommended) uses your graphics card only when it is a dedicated one. Graphics built into the processor are usually slower than the CPU for Cutout, so Auto leaves them off. On and Off override that. If the GPU doesn't work for a model, Cutout switches to the CPU by itself. A change applies to the next cutout.</p>
+          <p id="gpuExperimentalNote" class="settings-hint hidden" style="margin: 0">On Linux, GPU acceleration is experimental. Auto always uses the CPU here; switch On to try it (it needs working Vulkan graphics drivers). Please tell us on Discord how it goes.</p>
+        </div>
+        <div id="modelsSection" class="settings-section hidden">
+          <span class="settings-section-title">Models</span>
+          <div id="modelDownloadList" class="custom-model-list"></div>
+          <p class="settings-hint" style="margin: 0">The Lite installer only includes the Fast model. Downloads come from this version's GitHub release and are checked before they are used. Cutout only goes online when you click Download (and for Check for updates). Your images never leave this computer.</p>
         </div>
         <div class="settings-section">
           <span class="settings-section-title">Updates</span>
@@ -368,6 +424,21 @@
           <input id="customH" type="number" class="text-input" min="1" max="10000" aria-label="Height in pixels" />
         </div>
         <p class="settings-hint">A preset crops to the subject and centers it on a canvas of that size, over your chosen background.</p>
+      </div>
+      <div class="export-section" id="subjectSection">
+        <span class="settings-section-title">Subject position</span>
+        <input type="range" id="subjectSizeSlider" class="edge-slider" min="20" max="200" step="5" value="100" aria-label="Subject size" />
+        <div class="edge-labels">
+          <span>Size</span>
+          <button id="subjectResetBtn" class="edge-reset">Reset</button>
+        </div>
+        <input type="range" id="paddingSlider" class="edge-slider" min="0" max="30" step="1" value="6" aria-label="Padding around the subject" />
+        <div class="edge-labels"><span>Padding</span></div>
+        <input type="range" id="subjectXSlider" class="edge-slider" min="-100" max="100" step="1" value="0" aria-label="Move the subject left or right" />
+        <div class="edge-labels"><span>Left</span><span>Right</span></div>
+        <input type="range" id="subjectYSlider" class="edge-slider" min="-100" max="100" step="1" value="0" aria-label="Move the subject up or down" />
+        <div class="edge-labels"><span>Up</span><span>Down</span></div>
+        <p class="settings-hint">You can also drag the cutout in the Result preview to move it.</p>
       </div>
       <div class="export-section">
         <span class="settings-section-title">Auto-crop</span>
