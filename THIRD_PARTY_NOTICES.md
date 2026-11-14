@@ -32,6 +32,7 @@ Notes:
 | tauri-plugin-drag / drag-rs (CrabNebula) | MIT or Apache-2.0 |
 | ONNX Runtime (via the `ort` crate) | MIT |
 | DirectML (Microsoft), used for GPU acceleration on Windows | Distributed by Microsoft under its own terms: https://github.com/microsoft/DirectML |
+| Dawn (Google), shipped as `libwebgpu_dawn.so` for experimental GPU acceleration on Linux | BSD-3-Clause, see https://dawn.googlesource.com/dawn/+/refs/heads/main/LICENSE |
 | `ureq` (used only for the update check) | MIT or Apache-2.0 |
 | `windows` crate (Microsoft), used to detect graphics cards | MIT or Apache-2.0 |
 | `image` crate | MIT or Apache-2.0 |

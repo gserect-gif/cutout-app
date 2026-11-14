@@ -42,9 +42,12 @@ base64 = "0.22"
 # GPU acceleration: each OS gets its own provider, which makes the build link a
 # ONNX Runtime that includes it. If the GPU can't be used when the app runs,
 # Cutout falls back to the CPU on its own. Linux uses WebGPU, which is
-# experimental: Auto mode never picks it, only the On switch does.
+# experimental: Auto mode never picks it, only the On switch does. WebGPU needs
+# a separate shared library, libwebgpu_dawn.so, which build.yml packs into the
+# .deb and the AppImage (see "Build the app (Linux)" there).
 [target.'cfg(target_os = "linux")'.dependencies]
 ort = { version = "2.0.0-rc.13", features = ["webgpu"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { version = "2.0.0-rc.13", features = ["directml"] }
 # Lists the graphics adapters so Auto GPU mode can tell a dedicated card from integrated graphics.

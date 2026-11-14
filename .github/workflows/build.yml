@@ -127,7 +127,65 @@ jobs:
           Set-Content -Path "src-tauri\tauri.directml.conf.json" -Value $config -Encoding ascii
           Get-Content "src-tauri\tauri.directml.conf.json"
 
+      # ort-sys 2.0.0-rc.13 has a bug with newer Cargo versions: its build script
+      # puts its libraries into "examples" and "deps" folders next to Cargo's
+      # build folder, but assumes they already exist. On a fresh CI runner they
+      # don't, and the build crashes with "NotFound" in dynamic_link.rs. Creating
+      # the folders first avoids that. (Harmless when they already exist.)
+      - name: Create folders the ort-sys build script expects
+        shell: bash
+        run: mkdir -p src-tauri/target/release/build/examples src-tauri/target/release/build/deps
+
+      # ---- Linux build ----
+      # Linux GPU (WebGPU) links a separate shared library, libwebgpu_dawn.so. It
+      # has to be inside both the .deb and the AppImage, or the app would not
+      # start. So Linux is built in three steps instead of one: build the app,
+      # copy the library to a folder of our own, then package with that folder on
+      # LD_LIBRARY_PATH (so the AppImage tool finds the library and bundles it)
+      # and the library listed in the .deb's files. build.rs makes the app look
+      # in ../lib next to its binary, which is /usr/lib for the .deb and usr/lib
+      # inside the AppImage.
+      - name: Build the app (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        run: npm run tauri build -- --no-bundle
+
+      - name: Collect the WebGPU library (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/gpu-libs
+          LIB="$(find src-tauri/target/release/build -maxdepth 1 -name 'libwebgpu_dawn.so*' 2>/dev/null | head -n 1 || true)"
+          if [ -z "$LIB" ]; then
+            LIB="$(find "$HOME/.cache/ort.pyke.io" -name 'libwebgpu_dawn.so*' 2>/dev/null | head -n 1 || true)"
+          fi
+          if [ -z "$LIB" ]; then
+            echo "libwebgpu_dawn.so was not found after the build" >&2
+            exit 1
+          fi
+          cp -L "$LIB" src-tauri/gpu-libs/libwebgpu_dawn.so
+          ls -l src-tauri/gpu-libs
+          size=$(wc -c < src-tauri/gpu-libs/libwebgpu_dawn.so)
+          if [ "$size" -lt 1000000 ]; then
+            echo "libwebgpu_dawn.so is too small ($size bytes)" >&2
+            exit 1
+          fi
+          # What the app asks the system for. The library's file name must match.
+          readelf -d src-tauri/target/release/bgremover | grep -E 'NEEDED|RPATH|RUNPATH' || true
+
+      - name: Package the Linux installers
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DAWN="$PWD/src-tauri/gpu-libs/libwebgpu_dawn.so"
+          printf '{"bundle":{"linux":{"deb":{"files":{"/usr/lib/libwebgpu_dawn.so":"%s"}}}}}' "$DAWN" > src-tauri/tauri.linux-gpu.conf.json
+          cat src-tauri/tauri.linux-gpu.conf.json
+          LD_LIBRARY_PATH="$PWD/src-tauri/gpu-libs:${LD_LIBRARY_PATH:-}" \
+            npm run tauri bundle -- --bundles deb,appimage --config src-tauri/tauri.linux-gpu.conf.json
+
       - name: Build
+        if: matrix.os != 'ubuntu-24.04'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -235,23 +293,16 @@ jobs:
           draft: true
           files: model-assets/*
 
-      # The Linux GPU runtime (WebGPU, experimental) must be built into the app.
-      # If the build left extra shared libraries beside it, the installer would
-      # not contain them and the app would fail to start, so stop here and list
-      # them instead of shipping that. (This is also where the earlier WebGPU
-      # AppImage problem will show up, if it is still there.)
-      - name: Check the Linux build has no loose libraries
+      # Check the Linux packages really contain the WebGPU library. Without it
+      # the app would not start, so fail here instead of shipping that.
+      - name: Check the .deb contains the WebGPU library (Linux)
         if: matrix.os == 'ubuntu-24.04'
         shell: bash
         run: |
           set -euo pipefail
-          ls -l src-tauri/target/release/ | head -50
-          extra=$(ls src-tauri/target/release/*.so* 2>/dev/null | grep -v bgremover_lib || true)
-          if [ -n "$extra" ]; then
-            echo "The build produced shared libraries the installer does not include:" >&2
-            echo "$extra" >&2
-            exit 1
-          fi
+          ls -l src-tauri/target/release/bundle/deb src-tauri/target/release/bundle/appimage
+          deb="$(ls src-tauri/target/release/bundle/deb/*.deb | head -n 1)"
+          dpkg-deb -c "$deb" | grep 'libwebgpu_dawn' || { echo "libwebgpu_dawn.so is missing from the .deb" >&2; exit 1; }
 
       # The AppImage catalog's test bot found the Linux AppImage can't start
       # for other users: some files inside it lack read/execute permission for
@@ -268,6 +319,12 @@ jobs:
           APPIMAGE="$(ls *.AppImage | head -n 1)"
           chmod +x "$APPIMAGE"
           "./$APPIMAGE" --appimage-extract > /dev/null
+          # The WebGPU library must be inside the AppImage. The packaging step
+          # normally puts it there; add it here if it is missing.
+          mkdir -p squashfs-root/usr/lib
+          if [ ! -f squashfs-root/usr/lib/libwebgpu_dawn.so ]; then
+            cp -L "$GITHUB_WORKSPACE/src-tauri/gpu-libs/libwebgpu_dawn.so" squashfs-root/usr/lib/libwebgpu_dawn.so
+          fi
           chmod -R a+rX squashfs-root
           chmod a+x squashfs-root/AppRun
           if [ -f squashfs-root/AppRun.wrapped ]; then chmod a+x squashfs-root/AppRun.wrapped; fi
@@ -285,15 +342,32 @@ jobs:
           rm -rf squashfs-root appimagetool
           ls -l
 
-      # Swap the repaired AppImage into the draft release (same file name, so
-      # it replaces the one tauri-action uploaded).
-      - name: Replace AppImage on the draft release (Linux)
+      # Check the repaired AppImage really contains the WebGPU library.
+      - name: Check the AppImage contains the WebGPU library (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        working-directory: src-tauri/target/release/bundle/appimage
+        run: |
+          set -euo pipefail
+          APPIMAGE="$(ls *.AppImage | head -n 1)"
+          chmod +x "$APPIMAGE"
+          "./$APPIMAGE" --appimage-extract 'usr/lib/libwebgpu_dawn.so' > /dev/null
+          test -s squashfs-root/usr/lib/libwebgpu_dawn.so
+          ls -l squashfs-root/usr/lib/libwebgpu_dawn.so
+          rm -rf squashfs-root
+
+      # Linux isn't built by tauri-action (see "Build the app (Linux)"), so add
+      # the .deb and the repaired AppImage to the draft release here.
+      - name: Add the Linux installers to the draft release
         if: matrix.os == 'ubuntu-24.04' && startsWith(github.ref, 'refs/tags/') && steps.fixappimage.outcome == 'success'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          name: Cutout ${{ github.ref_name }}
           draft: true
-          files: src-tauri/target/release/bundle/appimage/*.AppImage
+          files: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
